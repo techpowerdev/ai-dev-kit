@@ -151,6 +151,7 @@ gh secret list -R <owner>/<repo>     # ต้องมี AI_PUSH_APP_PRIVATE_KE
 | ต้องรอ CI เขียว | ✅ เมื่อ main มี `package.json` | ✅ เมื่อ main มี `package.json` |
 | admin bypass ได้ | ❌ | ✅ |
 
+- **repo private บนแพลน Free/Pro/Team:** ถ้า GitHub ปฏิเสธการตั้ง reviewer (HTTP 422) สคริปต์จะหยุดพร้อมบอกวิธีไปต่อ ตรวจชื่อ reviewer ก่อน ถ้าเป็นข้อจำกัดของแพลนจริงและยอมรับว่าจะไม่มี Gate 4 ให้รันซ้ำพร้อม `--allow-unprotected-prod`
 - **รันหลังจาก main มี `package.json` แล้ว** ถ้ารันก่อน สคริปต์จะยังไม่บังคับ CI เพราะไม่งั้น main จะ merge อะไรไม่ได้เลย ให้รันซ้ำทีหลัง
 - บรรทัด `main:` ที่สคริปต์พิมพ์ต้องมีคำว่า **`green CI required`** ถ้าขึ้น `CI NOT required yet` แปลว่า main ยังไม่มี `package.json`
 
@@ -208,7 +209,7 @@ gh api repos/$R/environments --jq '[.environments[].name]'   # preview, staging,
 | ขั้น | คุณทำ | AI ทำ | สิ่งที่ควรเห็น |
 |---|---|---|---|
 | 1 | สร้าง issue จาก template "Feature request" (ใส่ label `ai:spec` ให้อัตโนมัติ) หรือใส่ label **`ai:spec`** เอง | job `spec` ใน **AI pipeline** รัน `/spec` | comment `# Spec: ...` พร้อม acceptance criteria และหัวข้อคำถามที่ต้องให้คนตอบ (อาจเป็นภาษาอังกฤษ "Open questions") แล้ว label `status:spec-review` ถูกเพิ่ม |
-| 2 | **ตอบคำถามเป็น comment ก่อน** แล้วใส่ label **`approved:spec`** | job `plan-and-build` รัน `/plan` | **low/medium risk:** ไม่มี comment plan AI เขียน plan แล้วทำต่อจนเปิด PR เลย ไปขั้นที่ 4 ได้ **high risk:** comment `# Plan: ...` พร้อมคำถาม "Decisions the human must confirm" และ Gate 1b |
+| 2 | **ตอบคำถามเป็น comment ก่อน** แล้วใส่ label **`approved:spec`** | job `plan-and-build` รัน `/plan` | comment `# Plan: ...` เสมอ **low/medium risk:** AI ทำต่อจนเปิด PR เลย ไปขั้นที่ 4 ได้ **high risk:** plan มีคำถาม "Decisions the human must confirm" และหยุดรอ Gate 1b |
 | 3 | (เฉพาะ high risk) ตอบ Decisions เป็น comment แล้วใส่ label **`approved:plan`** | job `build-high-risk` รัน `/implement` | PR ที่ลิงก์กลับมาที่ issue |
 | 4 | อ่าน AI review และลองบน preview แล้ว merge | CI, AI review, preview, AI QA | check ที่บังคับเขียว |
 | 5 | Actions → Deploy → **Review deployments** → approve production | deploy, smoke test และรายงานหลัง deploy | issue `Post-deploy report ...` |
@@ -226,7 +227,8 @@ gh api repos/$R/environments --jq '[.environments[].name]'   # preview, staging,
 | CI fail ด้วย `No pnpm version is specified` | `package.json` ไม่มี field `packageManager` | เพิ่ม `"packageManager": "pnpm@<version>"` |
 | AI review, AI QA หรือรายงานหลัง deploy ข้ามพร้อม warning `No Claude credential` | ยังไม่ได้ตั้ง secret | ทำขั้นที่ 2 |
 | AI pipeline หรือ `@claude` fail ที่ step ของ Claude โดยไม่มีข้อความชัดเจน | ยังไม่ได้ตั้ง secret (สอง workflow นี้ไม่ข้ามให้) | ทำขั้นที่ 2 แล้วกด **Re-run failed jobs** |
-| ใส่ `approved:spec` แล้วไม่เห็น comment plan | งาน low/medium risk ไม่โพสต์ plan แต่ทำต่อจนเปิด PR | รอ PR หรือดู log ของ job `plan-and-build` |
+| job ของ AI pipeline fail ด้วย `AI pipeline produced nothing` และมี comment ⚠️ บน issue | AI จบโดยไม่ได้ comment หรือ push อะไร งานที่ไม่ได้ push หายไปกับ runner | เปิดลิงก์ log ใน comment ดู annotation `Claude was denied a tool` แล้วใส่ label เดิมอีกครั้ง `/implement` จะทำต่อจาก branch `ai/<n>-*` ถ้ามี |
+| `/implement` ข้ามขั้นที่ระบุว่า **needs a human** | ขั้นนั้นต้องแก้ไฟล์ใน `.claude/` ซึ่ง AI บน Actions แก้ไม่ได้โดยตั้งใจ | ทำขั้นนั้นเองในเครื่องด้วย Claude Code ดูตารางใน [ai-workflow.md](ai-workflow.md) |
 | `401 Unauthorized - Claude Code is not installed on this repository` | ยังไม่ได้ติดตั้ง Claude GitHub App | ติดตั้งแอป แล้วกด **Re-run failed jobs** |
 | annotation `Failed to authenticate. API Error: 401 OAuth access token is invalid` | token ใน secret ไม่ถูกต้อง เช่น copy มาไม่ครบ | ตั้งใหม่ด้วย `/install-github-app` (ขั้นที่ 2) |
 | `AI review not posted` | Claude ทำงานจบแต่ไม่ได้โพสต์ comment | ดู annotation `Claude was denied a tool` ใน log ของ job ว่าคำสั่งไหนถูกปฏิเสธ |
