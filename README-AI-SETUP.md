@@ -68,7 +68,7 @@ claude
 
 ## ข้อควรรู้
 - **ทำคนเดียว:** GitHub ไม่ให้อนุมัติ PR ของตัวเอง — PR ที่ AI เปิด (ผ่าน Claude app) คุณอนุมัติได้ แต่ PR ที่คุณเปิดเองให้ใช้ทีมช่วย review หรือปรับ branch protection
-- **ค่าใช้จ่าย:** ทุก workflow ใช้ API token + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาที (กิน runner minutes) จะย้ายไปใช้ scheduled task แทนก็ได้
+- **ค่าใช้จ่าย:** ทุก workflow ใช้ API token + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer ใช้ได้กับ public repo หรือ private repo บน GitHub Pro/Team/Enterprise ถ้าไม่มี report จะรันทันทีหลัง deploy)
 - **Model:** ปรับใน frontmatter ของแต่ละ agent (`model: sonnet|opus|haiku|inherit`)
 - **ปรับปรุงต่อเนื่อง:** AI ผิดซ้ำเรื่องไหน → เพิ่มกฎใน `CLAUDE.md` หรือไฟล์ agent นั้น
 

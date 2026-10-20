@@ -100,20 +100,23 @@ jobs:
     needs: production
     if: needs.production.result == 'success'
     runs-on: ubuntu-latest
+    # Waits for 30 min of real traffic before judging. The delay comes from the
+    # "post-deploy-report" environment's wait timer (set by scripts/setup-github.sh),
+    # so no runner is held — unlike a `sleep` step, waiting costs no Actions minutes.
+    # If that environment is missing, GitHub creates it with no timer and this runs immediately.
+    environment: post-deploy-report
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
-      - name: Wait for traffic
-        run: sleep 1800   # 30 min of real traffic before judging
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}   # TODO: read-only token for your monitoring
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
-            Use the ops-monitor agent. A production deploy of ${{ github.sha }} finished about 30 minutes ago.
+            Use the ops-monitor agent. A production deploy of ${{ inputs.ref || github.sha }} finished about 30 minutes ago.
             Compare health before vs after (see docs/ai-workflow.md "Monitoring sources").
-            Open a GitHub issue titled "Post-deploy report ${{ github.sha }}" with the report and label it
+            Open a GitHub issue titled "Post-deploy report ${{ inputs.ref || github.sha }}" with the report and label it
             "deploy-report" plus "incident" if status is 🔴. Never roll back yourself.
           claude_args: >-
             --max-turns 30
