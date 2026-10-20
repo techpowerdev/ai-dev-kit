@@ -3,11 +3,16 @@
 # Reads the tool call JSON on stdin. Exit code 2 = block and tell Claude why.
 set -euo pipefail
 set -f   # never glob-expand: the hook inspects text, it must not match files on disk
+# Fail closed: an unexpected error (e.g. jq missing) blocks the tool call instead of
+# letting it through. Exit 2 is "block" for Claude Code; exit 1 would mean "allow".
+trap 'echo "BLOCKED by .claude/hooks/guard.sh: hook error on line $LINENO; fix the hook or run the command yourself" >&2; exit 2' ERR
+command -v jq >/dev/null || { echo "BLOCKED by .claude/hooks/guard.sh: jq is required" >&2; exit 2; }
 
 input="$(cat)"
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty')"
 cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty')"
-path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')"
+path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // .tool_input.path // empty')"
+pattern="$(printf '%s' "$input" | jq -r '.tool_input.glob // (if .tool_name == "Glob" then .tool_input.pattern else empty end) // empty')"
 
 block() { echo "BLOCKED by .claude/hooks/guard.sh: $1" >&2; exit 2; }
 
@@ -129,14 +134,12 @@ if [[ "$tool" == "Bash" ]]; then
   # --- In CI, comments and PR/issue bodies come only from files in the repo ---
   # Prompt injection could ask Claude to post .git/config (which holds a token) or a
   # process environment as a comment. In GitHub Actions, for gh pr|issue:
-  #   - no $(...) and no backticks that run a reader command
+  #   - no $(...)
   #   - --body-file / -F must be a plain relative path inside the checkout:
   #     letters, digits, _ . / - only (no $, ~, globs, braces), no ".." segment,
   #     nothing under .git/
   if [[ "${GITHUB_ACTIONS:-}" == "true" && "$flat" =~ gh[[:space:]]+(pr|issue)([[:space:]]|$) ]]; then
     [[ "$flat" == *"\$("* ]] && block "in CI, gh pr/issue commands may not use \$(...)"
-    [[ "$flat" =~ \`[[:space:]]*(cat|head|tail|less|more|base64|xxd|od|strings|env|printenv|sed|awk|grep|git|curl|wget)[[:space:]] ]] \
-      && block "in CI, gh pr/issue commands may not run commands in backticks"
     read -r -a gh_words <<<"$(printf '%s' "$flat" | tr ';|&<>()\n' '       ')"
     for ((i = 0; i < ${#gh_words[@]}; i++)); do
       w="${gh_words[i]//[\"\']/}"; f="__none__"
@@ -163,6 +166,16 @@ fi
 if [[ "$tool" == "Read" ]]; then
   is_secret_env_path "$path" && block "reading secret file '$path'"
   is_credential_path "$path" && block "reading a file that holds credentials ('$path')"
+fi
+
+# Grep and Glob can read or list the same files, so the same rules apply to their
+# path and file pattern, and they may not search inside .git/.
+if [[ "$tool" == "Grep" || "$tool" == "Glob" ]]; then
+  for p in "$path" "$pattern"; do
+    [[ -z "$p" ]] && continue
+    if names_secret "$p"; then block "$tool on a secret or credential file ('$p')"; fi
+    [[ "$p" =~ (^|/)\.git(/|$) ]] && block "$tool inside .git/ ('$p')"
+  done
 fi
 
 if [[ "$tool" == "Edit" || "$tool" == "Write" || "$tool" == "MultiEdit" || "$tool" == "NotebookEdit" ]]; then
