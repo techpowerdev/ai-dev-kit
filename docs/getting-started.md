@@ -49,7 +49,11 @@ rsync -a --ignore-existing --prune-empty-dirs "${EXCLUDE[@]}" "$KIT"/ ./
 chmod +x scripts/*.sh .claude/hooks/guard.sh
 ```
 
-3) ไฟล์ที่ข้อ 1 แสดงออกมา เช่น `CLAUDE.md`, `.gitignore` หรือไฟล์ใน `.github/` ให้ merge ด้วยมือ ดูความต่างได้ด้วย `diff "$KIT/CLAUDE.md" CLAUDE.md` ส่วน `.gitignore` อย่างน้อยต้องเพิ่มบรรทัดของ secret และ `.ai-review.md` จาก kit
+3) ไฟล์ที่ข้อ 1 แสดงออกมาต้อง merge ด้วยมือ ดูความต่างได้ด้วย `diff "$KIT/<ไฟล์>" <ไฟล์>` ไฟล์ที่ห้ามพลาด:
+   - **`.claude/settings.json`** ถ้ามีอยู่แล้ว kit จะไม่ทับ และ **guard hook จะไม่ถูกติดตั้ง** ต้องเพิ่ม `hooks.PreToolUse` และรายการ `deny` จาก kit เข้าไปเอง
+   - **`.github/workflows/*.yml`** โดยเฉพาะ `claude.yml` ถ้าเคยรัน `/install-github-app` แล้วเลือกให้สร้าง workflow ไฟล์นี้จะเป็น template ของ Anthropic ซึ่งไม่มีการจำกัดเครื่องมือและการตรวจของ kit ให้ใช้ของ kit แทน
+   - **`.gitignore`** อย่างน้อยต้องเพิ่มบรรทัดของ secret และ `.ai-review.md`
+   - **`CLAUDE.md`** รวมกฎของโปรเจกต์กับของ kit
 
 - **ห้าม copy `package.json`, `pnpm-lock.yaml` และ `tests/kit/` ของ kit** ไฟล์เหล่านี้มีไว้ให้ kit ทดสอบตัวเองเท่านั้น
 - **`package.json` ของโปรเจกต์ต้องมี** script `lint`, `typecheck`, `test`, `build` และ field `"packageManager": "pnpm@<version>"` ถ้าไม่มี field นี้ CI จะ fail ด้วย `No pnpm version is specified`
@@ -179,6 +183,11 @@ gh api repos/$R/environments --jq '[.environments[].name]'   # preview, staging,
 ## 5. ตรวจว่าพร้อมใช้
 
 - [ ] CI บน main ผ่าน
+- [ ] guard hook ติดตั้งและทำงาน คำสั่งแรกต้องแสดง `bash .claude/hooks/guard.sh` และคำสั่งที่สองต้องได้ `exit=2`
+  ```bash
+  jq -r '.hooks.PreToolUse[].hooks[].command' .claude/settings.json
+  echo '{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}' | bash .claude/hooks/guard.sh; echo "exit=$?"
+  ```
 - [ ] Claude GitHub App ติดตั้งแล้ว และมี Claude credential ใน secret แค่ตัวเดียว
 - [ ] branch protection ขึ้น `checks` ครบ 2 ตัว และ `enforce_admins: true` (ถ้าใช้ `--solo`)
 - [ ] มี environment ครบ 4 ตัว
