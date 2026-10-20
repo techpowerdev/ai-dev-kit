@@ -140,7 +140,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           REVIEW_BOT: ${{ vars.AI_REVIEW_BOT || 'claude[bot]' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: bash "$RUNNER_TEMP/check-pipeline-result.sh" "$ISSUE_NUMBER" "$PIPELINE_STARTED_AT"
+        run: bash "$RUNNER_TEMP/check-pipeline-result.sh" "$ISSUE_NUMBER" "$PIPELINE_STARTED_AT" build
 
   build-high-risk:
     if: github.event.label.name == 'approved:plan' && github.event.sender.type != 'Bot'

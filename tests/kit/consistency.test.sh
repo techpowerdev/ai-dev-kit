@@ -50,6 +50,9 @@ pipeline_claude="$(grep -c 'anthropics/claude-code-action@' .github/workflows/ai
 # shellcheck disable=SC2016  # literal text to match, not an expansion
 pipeline_checks="$(grep -c 'check-pipeline-result.sh" "$ISSUE_NUMBER"' .github/workflows/ai-pipeline.yml || true)"
 expect "every ai-pipeline Claude job checks it produced a result ($pipeline_checks of $pipeline_claude)" test "$pipeline_checks" -eq "$pipeline_claude"
+pb_block="$(sed -n '/^  plan-and-build:/,/^  build-high-risk:/p' .github/workflows/ai-pipeline.yml)"
+# shellcheck disable=SC2016  # literal text to match
+expect "plan-and-build checks in build mode (the plan comment alone is not a result)" grep -q '"$PIPELINE_STARTED_AT" build$' <<<"$pb_block"
 expect "/implement pushes after every plan step" grep -q 'then push right away' .claude/commands/implement.md
 expect "/implement resumes from an existing ai/<n>-* branch" grep -q 'continue from it' .claude/commands/implement.md
 # shellcheck disable=SC2016  # literal text to match, not an expansion
