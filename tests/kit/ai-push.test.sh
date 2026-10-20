@@ -104,7 +104,7 @@ grep -q '\.ai-pr-body\.md' "$OUT/uncommitted.txt" && bad ".ai-pr-body.md listed 
 trusted
 expect_ok "inspect (pipeline)" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
 out_has "uncommitted work is warned about" "uncommitted changes"
-[[ "$(outv commits)" == 2 && "$(outv branch)" == ai/12-add-thing && "$(outv high_risk)" == false ]] && ok || bad "inspect outputs: $(cat "$W/gh_out" 2>/dev/null | tr '\n' ' ')"
+[[ "$(outv commits)" == 2 && "$(outv branch)" == ai/12-add-thing && "$(outv high_risk)" == false ]] && ok || bad "inspect outputs: $(tr '\n' ' ' <"$W/gh_out" 2>/dev/null)"
 TIP="$(outv tip)"
 # a pre-push hook in the trusted repo must not run
 printf '#!/bin/sh\ntouch "%s/HOOK_RAN"\n' "$W" >"$W/trusted/.git/hooks/pre-push"; chmod +x "$W/trusted/.git/hooks/pre-push"
