@@ -67,16 +67,32 @@
 | 🟡 medium | ฟีเจอร์ใหม่ที่ไม่แตะเงิน/auth | + อ่านส่วน "👀 please look closely at" |
 | 🔴 high | payment, checkout, order, pricing, promotion, auth, migration, workflow/infra | อนุมัติ plan ก่อน + อ่านโค้ดทุกบรรทัดในไฟล์เสี่ยง + ลองบน preview เอง |
 
-`risk:high` ติดอัตโนมัติจาก path (`.github/labeler.yml`) และ CODEOWNERS บังคับให้เจ้าของอนุมัติ
+`risk:high` ติดอัตโนมัติจาก path (`.github/labeler.yml`) ในโหมดทีม CODEOWNERS บังคับให้เจ้าของอนุมัติ ในโหมด `--solo` ไม่มีใครบังคับ ต้องอ่านเองตามตารางนี้
+
+## Merge PR หลังเปิด branch protection
+- **ต้องรอ CI เขียว** check ที่บังคับคือ `lint · typecheck · test · build` และ `e2e (Playwright)` ส่วน AI review, preview และ dependency audit ไม่บังคับ แต่ควรอ่านผลก่อน merge
+- **branch ต้องตามทัน main** ถ้า main ขยับไปแล้ว ปุ่ม merge จะกดไม่ได้ ให้กด **Update branch** ใน PR แล้วรอ CI รอบใหม่
+- **merge ได้แบบ squash อย่างเดียว** branch ถูกลบอัตโนมัติหลัง merge
+- **โหมด `--solo` ใช้กฎกับ admin ด้วย** bypass ไม่ได้ ถ้า CI พังจากสาเหตุภายนอก ให้แก้ใน PR หรือรัน `setup-github.sh` แบบไม่ใส่ `--solo` ชั่วคราว (admin bypass ได้) แล้วรันกลับเป็น `--solo`
+- **PR ของ dependabot** ไม่ได้รับ secrets จึงไม่มี AI review ให้เช็คว่า SHA ใหม่มาจาก repo ทางการของ action และอ่าน release notes ถ้าเป็นการขึ้น major version
 
 ## ชั้นป้องกัน (ทำไม AI พังของไม่ได้)
 1. **CLAUDE.md** — กฎ "Never do"
 2. **`.claude/settings.json`** — allow / ask / deny ระดับคำสั่ง
 3. **`.claude/hooks/guard.sh`** — บล็อก push main, force push, merge, อ่าน .env ซ้ำอีกชั้น
 4. **Workflow `--allowedTools`** — AI ใน GitHub ใช้ได้เฉพาะเครื่องมือที่อนุญาต
-5. **Branch protection** — merge ได้ทางเดียวคือ PR + คนอนุมัติ + CI เขียว
+5. **Branch protection** — merge ได้ทางเดียวคือ PR + CI เขียว (+ คนอนุมัติในโหมดทีม)
 6. **Environment `production`** — deploy ต้องมีคนกดอนุมัติ, secret prod อยู่ใน environment เท่านั้น
 7. **Bot ไม่สามารถกด gate เอง** — workflow ไม่ทำงานถ้า label ถูกใส่โดย bot
+8. **Kit self-tests** — `pnpm test` เช็คว่าชั้นข้างบนยังอยู่ครบ เช่น hook ยังบล็อก push main และไม่มี workflow ไหนให้ Claude merge เอง
+
+### เมื่อ hook บล็อกคำสั่งที่ไม่อันตราย
+`guard.sh` ตรวจทุกคำในคำสั่ง shell รวมถึงข้อความ commit และเนื้อหา heredoc จึงบล็อกได้แม้คำนั้นอยู่ในข้อความ
+- **คำที่โดนบล็อก:** path ของไฟล์ `.env` (ยกเว้น `.env.example`, `.env.template`, `.env.sample`), คำสั่ง merge PR และคำสั่ง release ที่ไม่ใช่ list, view, download หรือ verify
+- **ทางเลี่ยง:** เขียนข้อความลงไฟล์ก่อน แล้วใช้ `git commit -F <file>` หรือ `gh pr create --body-file <file>`
+- **`rm -rf` ถูก deny ใน `settings.json`:** ใช้โฟลเดอร์ใหม่จาก `mktemp -d` แทนการลบแล้วสร้างใหม่
+- **ถ้าแก้ hook:** เพิ่มเคสใน `tests/kit/guard.test.sh` ทั้งเคสที่ต้องบล็อกและเคสใกล้เคียงที่ต้องผ่าน แล้วรัน `pnpm test`
+- **auto mode ของ Claude Code** อาจปฏิเสธการ commit ไฟล์ guardrail เช่น `CLAUDE.md` หรือ workflow ถ้าเจอ ให้คน commit เองด้วยคำสั่งที่ Claude เตรียมไว้
 
 ## Monitoring sources (ให้ ops-monitor ใช้)
 <!-- TODO: เติมของจริง -->
