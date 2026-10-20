@@ -63,7 +63,8 @@ jobs:
         if: always() && steps.claude.outcome != 'skipped' && steps.claude.outcome != ''
         env:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
-        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE"
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE" "$CLAUDE_OUTCOME"
 
   plan-and-build:
     if: github.event.label.name == 'approved:spec' && github.event.sender.type != 'Bot'
@@ -112,7 +113,8 @@ jobs:
         if: always() && steps.claude.outcome != 'skipped' && steps.claude.outcome != ''
         env:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
-        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE"
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE" "$CLAUDE_OUTCOME"
 
   build-high-risk:
     if: github.event.label.name == 'approved:plan' && github.event.sender.type != 'Bot'
@@ -161,4 +163,5 @@ jobs:
         if: always() && steps.claude.outcome != 'skipped' && steps.claude.outcome != ''
         env:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
-        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE"
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE" "$CLAUDE_OUTCOME"

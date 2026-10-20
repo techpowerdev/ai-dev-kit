@@ -114,5 +114,22 @@ lacks "payload: substitution hidden"   "$out" "SECRET-C"
 lacks "payload: multi-line body hidden" "$out" "SECRET-D"
 has   "payload: multi-line cmd kept"   "$out" "Bash: gh pr comment 10 --body"
 
+# 11. Cancelled step with no execution file: a notice, not a false "Claude failed"
+out="$(bash scripts/show-claude-error.sh "$tmp/none.json" cancelled 2>&1)"
+has   "cancelled: notice"              "$out" "::notice title=Claude was cancelled::"
+lacks "cancelled: no error"            "$out" "::error"
+out="$(bash scripts/show-claude-error.sh "$tmp/none.json" failure 2>&1)"
+has   "failed early: still an error"   "$out" "::error title=Claude failed::No execution file"
+
+# 12. A malformed tool_input does not hide the other denials
+cat >"$tmp/malformed.json" <<'J'
+[{"type":"result","subtype":"success","is_error":false,"permission_denials":[
+  {"tool_name":"Bash","tool_input":"not an object"},
+  {"tool_name":"Read","tool_input":{"file_path":"/etc/hosts"}}]}]
+J
+out="$(run "$tmp/malformed.json")"
+has   "malformed: hidden"              "$out" "Bash: (input hidden)"
+has   "malformed: others still shown"  "$out" "Read: /etc/hosts"
+
 echo "   show-claude-error: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

@@ -13,7 +13,8 @@
 # Workflows run a copy taken before Claude starts (see "Snapshot CI helpers"),
 # so Claude cannot change what this script does.
 set -euo pipefail
-file="${1:?usage: show-claude-error.sh <execution-file>}"
+file="${1:?usage: show-claude-error.sh <execution-file> [step-outcome]}"
+outcome="${2:-}"
 
 # Annotations end at a newline and treat a bare CR as one, so text from Claude
 # could otherwise start a new ::command::. Flatten whitespace and escape %.
@@ -23,6 +24,10 @@ annotate() {  # annotate <level> <title> <message>
   echo "::$1 title=$2::$msg"
 }
 
+if [[ ! -s "$file" && "$outcome" == "cancelled" ]]; then
+  annotate notice "Claude was cancelled" "The Claude step was cancelled, usually by a newer push or a timeout. Nothing to report."
+  exit 0
+fi
 if [[ ! -s "$file" ]]; then
   annotate error "Claude failed" "No execution file at $file. Claude failed before it started; see the claude-code-action step log above."
   exit 0
@@ -32,9 +37,13 @@ fi
 messages='[ .[] | if type == "array" then .[] else . end ]'
 flat='tostring | gsub("[\\s]+"; " ")'
 
+# Denied Bash commands are cut at the first quote, heredoc or $( and capped, so a
+# comment body or heredoc stays out of the log. This is best effort: an unquoted
+# argument before that point is still shown. Other tools show only a path or pattern.
 denied="$(jq -rs "$messages"' | .[] | select(.type == "result") | .permission_denials[]?
-  | "\(.tool_name // "unknown tool"): \((.tool_input // {}) as $i
-      | if $i.command then ($i.command | tostring | gsub("[\\s]+"; " ") | sub("[\"'"'"'`].*$"; "") | sub("(<<|\\$\\().*$"; "") | .[0:120])
+  | "\(.tool_name // "unknown tool" | tostring): \((.tool_input // {}) as $i
+      | if ($i | type) != "object" then "(input hidden)"
+        elif $i.command then ($i.command | '"$flat"' | sub("[\"'"'"'`].*$"; "") | sub("(<<|\\$\\().*$"; "") | .[0:120])
         else ($i.file_path // $i.pattern // $i.url // "(input hidden)") | '"$flat"' | .[0:160] end)"
 ' "$file" 2>/dev/null | awk '!seen[$0]++' || true)"
 while IFS= read -r line; do

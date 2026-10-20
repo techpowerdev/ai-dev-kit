@@ -31,6 +31,15 @@ jobs:
         # Copied before Claude runs, so Claude's file edits cannot change the scripts that
         # later steps run. (Code Claude may run, e.g. pnpm test, is not covered by this.)
         run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh "$RUNNER_TEMP/"
+      - name: Clear the review comment file
+        # Only Claude may create .ai-review.md. A PR that commits it (or a symlink in its
+        # place) could otherwise get its own text posted as the AI review.
+        run: |
+          if git ls-files --error-unmatch .ai-review.md >/dev/null 2>&1; then
+            echo "::error title=AI review::This PR adds .ai-review.md. Remove it; the AI review writes that file itself."
+            exit 1
+          fi
+          rm -f .ai-review.md
       - if: env.HAS_CLAUDE_AUTH == 'true'
         id: claude
         uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
@@ -52,7 +61,8 @@ jobs:
         if: always() && steps.claude.outcome != 'skipped' && steps.claude.outcome != ''
         env:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
-        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE"
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
+        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE" "$CLAUDE_OUTCOME"
       - name: Check the review was posted
         # A run can end "successfully" without posting (e.g. Claude stopped while
         # subagents were still running in the background). Fail loudly instead.
@@ -60,4 +70,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          # Login that posts the review. Set the repo variable AI_REVIEW_BOT if you use your own GitHub App.
+          REVIEW_BOT: ${{ vars.AI_REVIEW_BOT || 'claude[bot]' }}
         run: bash "$RUNNER_TEMP/check-review-posted.sh" "$PR_NUMBER" "$REVIEW_STARTED_AT"
