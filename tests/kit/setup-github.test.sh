@@ -52,6 +52,15 @@ check "rejected rules: production still created" rejected environments/productio
 check "rejected rules: report env still created" rejected environments/post-deploy-report '.wait_timer == null'
 if grep -q "rejected the protection rules for 'production'" "$tmp/rejected.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ rejected rules should be reported"; fi
 if grep -q "requires approval from" "$tmp/rejected.out"; then fail=$((fail+1)); echo "   ✗ must not claim Gate 4 when rules were rejected"; else pass=$((pass+1)); fi
+# On a public repo a rejection is never a plan limit: stop, and never create production without rules.
+if FAKE_VISIBILITY=public FAKE_REJECT_RULES=1 FAKE_GH_LOG="$tmp/pubreject.log" FAKE_HAS_PKG=1 \
+     PATH="$PWD/tests/kit/fake-gh:$PATH" bash scripts/setup-github.sh owner/repo me --solo >"$tmp/pubreject.out" 2>&1; then
+  fail=$((fail+1)); echo "   ✗ public repo: a rejected Gate 4 must stop the script"
+else pass=$((pass+1)); fi
+if grep -q 'environments/production' "$tmp/pubreject.log" 2>/dev/null; then
+  fail=$((fail+1)); echo "   ✗ public repo: production must not be created without its rules"
+else pass=$((pass+1)); fi
+if grep -q "HTTP 422" "$tmp/pubreject.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ the real GitHub error should be shown"; fi
 
 if ! grep -q "Mode: solo" "$tmp/solo.out"; then fail=$((fail+1)); echo "   ✗ solo mode not reported"; else pass=$((pass+1)); fi
 if PATH="$PWD/tests/kit/fake-gh:$PATH" FAKE_GH_LOG=/dev/null bash scripts/setup-github.sh o/r me --bogus >/dev/null 2>&1; then

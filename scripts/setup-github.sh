@@ -99,14 +99,26 @@ gh api -X PUT "repos/$REPO/environments/staging" --input - >/dev/null <<JSON
 JSON
 # prevent_self_review stays false so a solo maintainer can approve their own deploy.
 # In a team, consider setting it to true so the person who merged is not the one who ships.
-# If GitHub rejects the protection rules (possible on a private repo without Enterprise),
-# still create the environment so deploys have somewhere to go, and say so loudly.
+# Creates an environment with its protection rules. Only one failure is tolerated: on a
+# non-public repo, GitHub may answer 422 because the plan does not include the rules.
+# Then the environment is created without them and the caller is told (return 1).
+# Any other failure (auth, network, a reviewer without access, a 422 on a public repo)
+# shows GitHub's error and stops the script, so Gate 4 is never dropped silently.
 put_env() {  # put_env <name> <json-with-rules> <json-without-rules>
-  if ! gh api -X PUT "repos/$REPO/environments/$1" --input - >/dev/null 2>&1 <<<"$2"; then
-    echo "   ⚠️  GitHub rejected the protection rules for '$1' (plan limit?). Created it without them."
+  local err
+  if err="$(gh api -X PUT "repos/$REPO/environments/$1" --input - 2>&1 >/dev/null <<<"$2")"; then
+    return 0
+  fi
+  if [[ "$VISIBILITY" != "public" && "$err" == *422* ]]; then
+    echo "   ⚠️  GitHub rejected the protection rules for '$1' on this $VISIBILITY repo (plan limit):"
+    echo "       $err"
+    echo "       Created '$1' without them."
     gh api -X PUT "repos/$REPO/environments/$1" --input - >/dev/null <<<"$3"
     return 1
   fi
+  echo "   ✗ Could not create environment '$1' with its protection rules:" >&2
+  echo "     $err" >&2
+  exit 1
 }
 BRANCHES='"deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false }'
 if put_env production \
