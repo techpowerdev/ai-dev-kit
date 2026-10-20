@@ -1,0 +1,207 @@
+# เริ่มใช้ AI Dev Kit: ตั้งแต่ศูนย์จนพัฒนา feature แรก
+
+คู่มือนี้พาทำทีละขั้นจน repo พร้อมใช้ และส่ง feature แรกผ่าน flow ของ AI ได้ ทุกขั้นมีคำสั่งตรวจว่าทำสำเร็จแล้ว ใช้เวลาประมาณ 1 ชั่วโมง
+
+- ภาพรวมของ flow และ human gate: [ai-workflow.md](ai-workflow.md)
+- รายละเอียดแต่ละไฟล์ใน kit: [README-AI-SETUP.md](../README-AI-SETUP.md)
+
+> **รันคำสั่งที่ไหน:** คำสั่งใน code block ของ bash รันใน terminal จาก root ของ repo ส่วนคำสั่งที่ขึ้นต้นด้วย `/` เช่น `/install-github-app` ให้พิมพ์ในแชทของ Claude Code
+>
+> ในคู่มือนี้ `<owner>/<repo>` คือชื่อ repo ของคุณ เช่น `techpowerdev/ai-dev-kit`
+
+---
+
+## 0. ก่อนเริ่ม
+
+| ต้องมี | ใช้ทำอะไร |
+|---|---|
+| repo บน GitHub ที่คุณเป็น admin | ตั้ง branch protection, environment และ secret |
+| `gh` (login แล้ว), `jq`, `git` | รันสคริปต์ตั้งค่า และ hook ของ Claude ต้องใช้ `jq` |
+| Claude Code ในเครื่อง | ใช้ `/install-github-app` และ slash command ตอนทำงานเอง |
+| แพลน Claude แบบ Pro, Max, Team หรือ Enterprise **หรือ** บัญชี Claude Console | ให้ AI ใน GitHub Actions ทำงาน (ดูขั้นที่ 2) |
+| repo แบบ public หรือ GitHub Pro/Team/Enterprise | ใช้ wait timer ของ environment `post-deploy-report` ถ้าไม่มี report หลัง deploy จะรันทันทีโดยไม่รอ 30 นาที |
+
+ตรวจ:
+```bash
+gh auth status && jq --version && claude --version
+```
+
+---
+
+## 1. ใส่ kit ลงใน repo
+
+```bash
+rsync -a --prune-empty-dirs \
+  --exclude .git --exclude node_modules \
+  --exclude package.json --exclude pnpm-lock.yaml --exclude tests/kit \
+  ai-dev-kit/ /path/to/your-repo/
+cd /path/to/your-repo
+chmod +x scripts/*.sh .claude/hooks/guard.sh
+```
+
+- **ห้าม copy `package.json`, `pnpm-lock.yaml` และ `tests/kit/` ของ kit** ไฟล์เหล่านี้มีไว้ให้ kit ทดสอบตัวเองเท่านั้น
+- **`package.json` ของโปรเจกต์ต้องมี** script `lint`, `typecheck`, `test`, `build` และ field `"packageManager": "pnpm@<version>"` ถ้าไม่มี field นี้ CI จะ fail ด้วย `No pnpm version is specified`
+- **ต้อง commit `pnpm-lock.yaml`** ทุก workflow ใช้ `--frozen-lockfile`
+- **แก้ TODO ให้ตรงโปรเจกต์** โดยเฉพาะ path ของ apps ใน `CLAUDE.md`, ชื่อคนใน `.github/CODEOWNERS` และ `scripts/deploy.sh`
+  ```bash
+  grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts docs
+  ```
+
+push ทั้งหมดขึ้น main **ก่อน** ทำขั้นที่ 4 เพราะหลังเปิด branch protection แล้วจะ push ตรงไม่ได้
+
+ตรวจ: CI บน main ต้องรันและผ่าน
+```bash
+gh run list --branch main --workflow CI --limit 1
+```
+
+---
+
+## 2. ติดตั้ง Claude GitHub App และตั้ง credential
+
+AI ใน Actions ต้องมีสองอย่าง คือ Claude GitHub App ติดตั้งอยู่บน repo และ credential ของ Claude หนึ่งตัวใน secret
+
+### วิธีที่แนะนำ: `/install-github-app` (ใช้ subscription)
+
+1. เปิด Claude Code ใน repo แล้วพิมพ์ `/install-github-app`
+2. ทำตามขั้นตอนเพื่อติดตั้ง Claude GitHub App ให้ repo นี้
+3. ถ้าเจอหน้าจอ **"Existing Workflow Found"** ให้เลือก **"Skip workflow update (configure secrets only)"** ห้ามเลือก "Update workflow file" เพราะจะเอา template ของ Anthropic มาทับ `.github/workflows/claude.yml` ของ kit
+4. เลือกใช้ subscription ระบบจะสร้าง token แล้วตั้งเป็น secret `CLAUDE_CODE_OAUTH_TOKEN` ให้เอง
+5. ถ้าเครื่องมือเปิด PR เพิ่มไฟล์ workflow ให้ปิด PR นั้นโดยไม่ merge
+
+> **ทำไมไม่ copy token เอง:** `claude setup-token` พิมพ์ token ยาวจนขึ้นบรรทัดใหม่ใน terminal ตอน copy จึงมักได้ token ไม่ครบหรือมีข้อความอื่นติดมา ผลคือ CI ขึ้น `401 OAuth access token is invalid` และตอนวางใน `gh secret set` จะมองไม่เห็นตัวอักษร จึงตรวจด้วยตาไม่ได้ **อย่าวาง token ในแชท, issue, PR หรือ commit** ถ้าหลุดไปแล้วให้สร้างใหม่ทันที
+
+### อีกทางหนึ่ง: API key (คิดเงินตามการใช้งาน ไม่หมดอายุ)
+
+1. ไปที่ console.anthropic.com → API Keys → Create Key → กด copy
+2. GitHub → repo → Settings → Secrets and variables → Actions → New repository secret ชื่อ `ANTHROPIC_API_KEY` แล้ววาง key ลงไป ช่องนี้แสดงข้อความที่วาง จึงเห็นได้ว่าครบ
+3. ตั้ง spending limit ใน Console ด้วย เพราะ AI review รันทุก PR
+
+**ตั้งแค่ตัวเดียว** ถ้าตั้งทั้งสองตัว Claude จะใช้ API key และคิดเงินแบบ API โดยไม่เตือน ดูตารางเทียบที่ [README ขั้นตอนที่ 4](../README-AI-SETUP.md)
+
+ตรวจ (แสดงแค่ชื่อ ไม่แสดงค่า):
+```bash
+gh secret list -R <owner>/<repo>
+```
+และเปิด `https://github.com/<owner>/<repo>/settings/installations` ต้องเห็น **Claude** อยู่ในรายการ
+
+---
+
+## 3. สร้าง GitHub App สำหรับ push
+
+> ใช้กับ ai-pipeline ที่ AI push branch `ai/*` และเปิด PR เอง ระบบนี้กำลังทำใน [#12](https://github.com/techpowerdev/ai-dev-kit/issues/12) ตั้งไว้ก่อนได้ ไม่มีผลกับส่วนอื่น
+
+เหตุผลที่ต้องมี: push ด้วย `GITHUB_TOKEN` จะไม่ทำให้ CI และ AI review รันกับ commit ใหม่ ส่วน token ของ App ทำได้ App ฟรี token ที่สร้างจากมันมีอายุ 1 ชั่วโมง
+
+1. รูปโปรไฟล์ → **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**
+2. กรอกฟอร์ม
+   - **GitHub App name:** เช่น `<owner>-ai-pusher` ไม่เกิน 34 ตัวอักษร และต้องไม่ซ้ำกับใครบน GitHub
+   - **Homepage URL:** URL ของ repo
+   - **Webhook:** เอาติ๊ก **Active** ออก
+   - **Repository permissions:** Contents: Read & write, Pull requests: Read & write, Workflows: Read & write (ต้องมีถ้า PR ของ AI แก้ `.github/workflows/`) ที่เหลือปล่อย No access
+   - **Where can this GitHub App be installed?** → **Only on this account**
+3. **Create GitHub App** แล้ว copy **Client ID** (ขึ้นต้นด้วย `Iv`)
+4. **Credentials** → **Key pairs** → **New key** browser จะดาวน์โหลดไฟล์ `.pem` ให้ key ไม่หมดอายุ
+5. **Install App** → **Install** → **Only select repositories** → เลือก repo → **Install**
+6. เก็บค่าไว้ใน repo แล้วลบไฟล์ key ออกจากเครื่อง
+   ```bash
+   gh variable set AI_PUSH_APP_CLIENT_ID -R <owner>/<repo> --body "Iv23..."
+   gh secret set AI_PUSH_APP_PRIVATE_KEY -R <owner>/<repo> < ~/Downloads/<app-name>.*.private-key.pem
+   rm ~/Downloads/<app-name>.*.private-key.pem
+   ```
+
+ตรวจ:
+```bash
+gh variable list -R <owner>/<repo>   # ต้องมี AI_PUSH_APP_CLIENT_ID
+gh secret list -R <owner>/<repo>     # ต้องมี AI_PUSH_APP_PRIVATE_KEY
+```
+
+---
+
+## 4. ตั้งค่า repo ด้วย `setup-github.sh`
+
+สคริปต์นี้สร้าง label, branch protection และ environment รันซ้ำได้
+
+```bash
+./scripts/setup-github.sh <owner>/<repo> <your-github-username> --solo   # ทำคนเดียว
+./scripts/setup-github.sh <owner>/<repo> <your-github-username>          # ทีม
+```
+
+| | `--solo` | ทีม |
+|---|---|---|
+| ต้องเปิด PR | ✅ | ✅ |
+| ต้องมีคน approve | ❌ (GitHub ไม่ให้ approve PR ตัวเอง) | ✅ 1 คน + CODEOWNERS |
+| ต้องรอ CI เขียว | ✅ เมื่อ main มี `package.json` | ✅ เมื่อ main มี `package.json` |
+| admin bypass ได้ | ❌ | ✅ |
+
+- **รันหลังจาก main มี `package.json` แล้ว** ถ้ารันก่อน สคริปต์จะยังไม่บังคับ CI เพราะไม่งั้น main จะ merge อะไรไม่ได้เลย ให้รันซ้ำทีหลัง
+- บรรทัด `main:` ที่สคริปต์พิมพ์ต้องมีคำว่า **`green CI required`** ถ้าขึ้น `CI NOT required yet` แปลว่า main ยังไม่มี `package.json`
+
+ตรวจ:
+```bash
+R=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+gh api repos/$R/branches/main/protection --jq '{checks: .required_status_checks.contexts, enforce_admins: .enforce_admins.enabled, approvals: .required_pull_request_reviews.required_approving_review_count}'
+gh api repos/$R/environments --jq '[.environments[].name]'   # preview, staging, production, post-deploy-report
+```
+
+---
+
+## 5. ตรวจว่าพร้อมใช้
+
+- [ ] CI บน main ผ่าน
+- [ ] Claude GitHub App ติดตั้งแล้ว และมี Claude credential ใน secret แค่ตัวเดียว
+- [ ] branch protection ขึ้น `checks` ครบ 2 ตัว และ `enforce_admins: true` (ถ้าใช้ `--solo`)
+- [ ] มี environment ครบ 4 ตัว
+- [ ] (ถ้าจะใช้ ai-pipeline) มี `AI_PUSH_APP_CLIENT_ID` และ `AI_PUSH_APP_PRIVATE_KEY`
+- [ ] **ทดสอบจริง:** เปิด PR เล็กๆ เช่นแก้คำผิดใน docs แล้วรอ CI ต้องเห็น
+  - check `lint · typecheck · test · build` และ `e2e (Playwright)` เขียว
+  - check `AI review / review` เขียว และใน log มีบรรทัด `AI review posted`
+  - comment จาก `claude[bot]` ที่ขึ้นต้นด้วย `## AI Review` บน PR
+
+ถ้าข้อสุดท้ายผ่าน แปลว่า credential, Claude GitHub App และ workflow ทำงานครบเส้น
+
+---
+
+## 6. Feature แรก: ผ่าน flow ของ AI
+
+ตัวอย่างจริงคือ [#12](https://github.com/techpowerdev/ai-dev-kit/issues/12)
+
+| ขั้น | คุณทำ | AI ทำ | สิ่งที่ควรเห็น |
+|---|---|---|---|
+| 1 | สร้าง issue จาก template "Feature request" หรือใส่ label **`ai:spec`** | job `spec` ใน **AI pipeline** รัน `/spec` | comment `# Spec: ...` พร้อม acceptance criteria และ **Open questions** แล้ว label `status:spec-review` ถูกเพิ่ม |
+| 2 | **ตอบ Open questions เป็น comment ก่อน** แล้วใส่ label **`approved:spec`** | job `plan-and-build` รัน `/plan` | comment `# Plan: ...` |
+| 3a | (low/medium risk) ไม่ต้องทำอะไร | AI เขียนโค้ด แล้วเปิด PR ต่อเอง | PR ที่ลิงก์กลับมาที่ issue |
+| 3b | (high risk) ตอบ **Decisions the human must confirm** เป็น comment แล้วใส่ label **`approved:plan`** | job `build-high-risk` รัน `/implement` | PR ที่ลิงก์กลับมาที่ issue |
+| 4 | อ่าน AI review และลองบน preview แล้ว merge | CI, AI review, preview, AI QA | check ที่บังคับเขียว |
+| 5 | Actions → Deploy → **Review deployments** → approve production | deploy, smoke test และรายงานหลัง deploy | issue `Post-deploy report ...` |
+
+- **ตอบคำถามก่อนใส่ label เสมอ** AI จะอ่าน issue ทันทีที่เห็น label ถ้า comment ยังไม่มา คำตอบจะไม่ถูกนำไปใช้
+- **job อาจรอคิว runner 2–4 นาที** ก่อนเริ่มทำงาน เป็นเรื่องปกติ
+- **ค่าใช้จ่ายที่วัดได้จริง** (หักจากโควต้า subscription): spec ประมาณ $0.3, AI review ประมาณ $0.5–1 ต่อรอบ เพิ่มขึ้นถ้ามี security review
+
+---
+
+## 7. แก้ปัญหา
+
+| อาการ | สาเหตุ | วิธีแก้ |
+|---|---|---|
+| CI fail ด้วย `No pnpm version is specified` | `package.json` ไม่มี field `packageManager` | เพิ่ม `"packageManager": "pnpm@<version>"` |
+| job AI ข้ามพร้อม warning `No Claude credential` | ยังไม่ได้ตั้ง secret | ทำขั้นที่ 2 |
+| `401 Unauthorized - Claude Code is not installed on this repository` | ยังไม่ได้ติดตั้ง Claude GitHub App | ติดตั้งแอป แล้วกด **Re-run failed jobs** |
+| annotation `Failed to authenticate. API Error: 401 OAuth access token is invalid` | token ใน secret ไม่ถูกต้อง เช่น copy มาไม่ครบ | ตั้งใหม่ด้วย `/install-github-app` (ขั้นที่ 2) |
+| `AI review not posted` | Claude ทำงานจบแต่ไม่ได้โพสต์ comment | ดู annotation `Claude was denied a tool` ใน log ของ job ว่าคำสั่งไหนถูกปฏิเสธ |
+| AI review บอกว่ามี "uncommitted change" ใน `.claude/` | claude-code-action คืน `.claude/` เป็นเวอร์ชันบน main ก่อนรัน เพื่อไม่ให้ PR แก้คำสั่งของ Claude เอง | ไม่ต้องแก้ การเปลี่ยนใน `.claude/` มีผลหลัง merge เท่านั้น |
+| คำสั่งถูกบล็อกด้วย `BLOCKED by .claude/hooks/guard.sh` | hook ของ Claude Code | ดูตารางคำที่ถูกบล็อกใน [ai-workflow.md](ai-workflow.md) ถ้าคำต้องห้ามอยู่แค่ในข้อความ ให้ใช้ `git commit -F <file>` |
+| ปุ่ม merge กดไม่ได้ | CI ยังไม่เขียว หรือ branch ตามหลัง main | รอ CI หรือกด **Update branch** |
+| PR ค้างรอ check `dependency audit` | branch protection ตั้งด้วยสคริปต์เวอร์ชันเก่า | รัน `setup-github.sh` ซ้ำ |
+| job e2e ผ่านพร้อม warning ว่าข้าม | ยังไม่มี script `e2e:setup` และ `test:e2e` | เพิ่ม script เมื่อพร้อม |
+| รายงานหลัง deploy รันทันทีโดยไม่รอ 30 นาที | wait timer ใช้ไม่ได้กับ repo private บนแพลนฟรี | ยอมรับไปก่อน หรืออัปเกรดแพลน |
+| job `AI pipeline` ขึ้น Queued นานหลายนาที | รอ runner ของ GitHub | รอ ถ้าเกิน 10 นาที เช็ค githubstatus.com |
+
+---
+
+## 8. ต่อจากนี้
+
+- **ทำงานประจำวัน, merge และ PR ของ dependabot:** [ai-workflow.md](ai-workflow.md) หัวข้อ "Merge PR หลังเปิด branch protection"
+- **ขอให้ AI แก้ใน PR:** comment `@claude ...` บน PR (ทำได้เฉพาะสมาชิกของ repo)
+- **ใช้ในเครื่อง:** `claude` แล้วพิมพ์ `/spec 12`, `/implement 12` หรือ `/review`
+- **AI ทำผิดซ้ำเรื่องเดิม:** เพิ่มกฎใน `CLAUDE.md` หรือในไฟล์ agent ที่เกี่ยวข้อง

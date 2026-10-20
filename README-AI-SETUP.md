@@ -3,6 +3,8 @@
 ชุดนี้ทำให้ repo มีทีม AI agent ทำงานตั้งแต่ issue → spec → code → review → QA → deploy
 โดยคนอนุมัติ 4 จุด (ดูภาพรวมที่ `docs/ai-workflow.md`)
 
+> 👉 **ติดตั้งครั้งแรก:** ทำตาม [docs/getting-started.md](docs/getting-started.md) คู่มือทีละขั้นพร้อมคำสั่งตรวจและตารางแก้ปัญหา หน้านี้เป็นข้อมูลอ้างอิง
+
 ## สิ่งที่ต้องมี
 - Repo บน GitHub (คุณเป็น admin) · `gh` CLI · `jq`
 - Claude Code ในเครื่อง (สำหรับใช้ agent/slash command ตอนทำงานเอง)
@@ -56,11 +58,13 @@ grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts doc
 | อายุ | จนกว่าจะลบ | 1 ปี แล้วต้องสร้างใหม่ |
 | เหมาะกับ | repo ของทีม / secret ระดับ org | repo ส่วนตัวที่ดูแลคนเดียว |
 
+**วิธีที่แนะนำสำหรับ subscription:** พิมพ์ `/install-github-app` ใน Claude Code ถ้าเจอ "Existing Workflow Found" ให้เลือก **"Skip workflow update (configure secrets only)"** ระบบจะตั้ง `CLAUDE_CODE_OAUTH_TOKEN` ให้เอง ไม่ต้อง copy token (ดู [getting-started ขั้นที่ 2](docs/getting-started.md))
+
 ```bash
 gh secret set ANTHROPIC_API_KEY          # หรือ
 gh secret set CLAUDE_CODE_OAUTH_TOKEN
 ```
-ตั้ง `CLAUDE_CODE_OAUTH_TOKEN` ทีละขั้น:
+ตั้ง `CLAUDE_CODE_OAUTH_TOKEN` เองทีละขั้น (ระวัง: token ยาวจนขึ้นบรรทัดใหม่ใน terminal copy แล้วมักได้ไม่ครบ):
 ```bash
 claude setup-token                                        # เปิด browser ให้ login claude.ai แล้วแสดง token ใน terminal
 gh secret set CLAUDE_CODE_OAUTH_TOKEN -R <owner>/<repo>   # วาง token แล้วกด Enter (ตัวอักษรไม่ขึ้นจอ เป็นปกติ)
@@ -148,6 +152,7 @@ README-AI-SETUP.md                ไฟล์นี้
     audit.yml                     pnpm audit: PR ที่แตะ dependency + ทุกสัปดาห์ (ไม่ใช่ required check)
     deploy.yml                    staging → 👤 approve → production → AI report
 docs/
+  getting-started.md              คู่มือติดตั้งทีละขั้น ตั้งแต่ศูนย์จนพัฒนา feature แรก
   ai-workflow.md                  คู่มือการทำงาน + gates
   specs/ plans/ adr/ releases/    templates
 scripts/
