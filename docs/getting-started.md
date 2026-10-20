@@ -33,15 +33,23 @@ gh repo view --json visibility -q .visibility   # PUBLIC หรือ PRIVATE
 
 ## 1. ใส่ kit ลงใน repo
 
+clone kit ไว้ **นอก** repo ของคุณ แล้ว copy เฉพาะไฟล์ที่โปรเจกต์ยังไม่มี ไฟล์ที่มีอยู่แล้วจะไม่ถูกทับ
+
 ```bash
-git clone https://github.com/techpowerdev/ai-dev-kit.git
-rsync -a --prune-empty-dirs \
-  --exclude .git --exclude node_modules \
-  --exclude package.json --exclude pnpm-lock.yaml --exclude tests/kit \
-  ai-dev-kit/ /path/to/your-repo/
+KIT="$(mktemp -d)/ai-dev-kit"
+git clone https://github.com/techpowerdev/ai-dev-kit.git "$KIT"
 cd /path/to/your-repo
+EXCLUDE=(--exclude .git --exclude node_modules --exclude package.json --exclude pnpm-lock.yaml --exclude tests/kit)
+
+# 1) ดูก่อน: ไฟล์ที่โปรเจกต์มีอยู่แล้วและต่างจาก kit (บรรทัดที่ขึ้นต้นด้วย >f)
+rsync -an --existing --itemize-changes --prune-empty-dirs "${EXCLUDE[@]}" "$KIT"/ ./
+
+# 2) copy เฉพาะไฟล์ที่ยังไม่มี
+rsync -a --ignore-existing --prune-empty-dirs "${EXCLUDE[@]}" "$KIT"/ ./
 chmod +x scripts/*.sh .claude/hooks/guard.sh
 ```
+
+3) ไฟล์ที่ข้อ 1 แสดงออกมา เช่น `CLAUDE.md`, `.gitignore` หรือไฟล์ใน `.github/` ให้ merge ด้วยมือ ดูความต่างได้ด้วย `diff "$KIT/CLAUDE.md" CLAUDE.md` ส่วน `.gitignore` อย่างน้อยต้องเพิ่มบรรทัดของ secret และ `.ai-review.md` จาก kit
 
 - **ห้าม copy `package.json`, `pnpm-lock.yaml` และ `tests/kit/` ของ kit** ไฟล์เหล่านี้มีไว้ให้ kit ทดสอบตัวเองเท่านั้น
 - **`package.json` ของโปรเจกต์ต้องมี** script `lint`, `typecheck`, `test`, `build` และ field `"packageManager": "pnpm@<version>"` ถ้าไม่มี field นี้ CI จะ fail ด้วย `No pnpm version is specified`

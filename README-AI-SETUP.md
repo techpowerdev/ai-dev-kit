@@ -16,7 +16,7 @@
 
 **1. คัดลอกไฟล์เข้า repo**
 ```bash
-rsync -a --prune-empty-dirs \
+rsync -a --ignore-existing --prune-empty-dirs \
   --exclude .git --exclude node_modules \
   --exclude package.json --exclude pnpm-lock.yaml --exclude tests/kit \
   ai-dev-kit/ /path/to/your-repo/
@@ -24,7 +24,7 @@ cd /path/to/your-repo
 chmod +x scripts/*.sh .claude/hooks/guard.sh
 ```
 - **อย่า copy `package.json`, `pnpm-lock.yaml` และ `tests/kit/`** ไฟล์เหล่านี้มีไว้ให้ kit ทดสอบตัวเองเท่านั้น ถ้า copy ไปจะทับไฟล์ของโปรเจกต์
-- ถ้ามี `.github/` หรือ `CLAUDE.md` อยู่แล้ว ให้ merge ด้วยมือ
+- `--ignore-existing` ไม่ทับไฟล์ที่โปรเจกต์มีอยู่แล้ว เช่น `CLAUDE.md`, `.gitignore` หรือไฟล์ใน `.github/` ไฟล์เหล่านั้นต้อง merge ด้วยมือ ดูวิธีหาว่าไฟล์ไหนชนใน [getting-started ขั้นที่ 1](docs/getting-started.md)
 
 **2. แก้ให้ตรงโปรเจกต์** — ค้นคำว่า `TODO`
 ```bash
