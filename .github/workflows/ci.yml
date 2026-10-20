@@ -76,12 +76,27 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      # TODO: adjust to your scripts — migrate + seed test data, start backend & storefront
-      - run: pnpm e2e:setup
-      - run: pnpm test:e2e
+      # e2e is opt-in until the project defines both scripts in the root package.json:
+      #   "e2e:setup": migrate + seed test data, start backend & storefront
+      #   "test:e2e":  playwright test
+      # Until then this job passes with a warning instead of blocking every PR.
+      - id: scripts
+        name: Check e2e scripts exist
+        run: |
+          if node -e "const s=require('./package.json').scripts||{}; process.exit(s['e2e:setup']&&s['test:e2e']?0:1)"; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::e2e skipped — add 'e2e:setup' and 'test:e2e' scripts to package.json to enable it."
+          fi
+      - if: steps.scripts.outputs.ready == 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - if: steps.scripts.outputs.ready == 'true'
+        run: pnpm e2e:setup
+      - if: steps.scripts.outputs.ready == 'true'
+        run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.scripts.outputs.ready == 'true'
         with:
           name: playwright-report
           path: |

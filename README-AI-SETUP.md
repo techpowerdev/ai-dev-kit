@@ -25,8 +25,13 @@ grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts doc
 - `CLAUDE.md` — path ของ apps, คำสั่ง build/test
 - `.github/CODEOWNERS` — ใส่ GitHub username จริง
 - `scripts/deploy.sh` — ใส่คำสั่ง deploy ของ host ที่ใช้
-- `package.json` — ต้องมี script `lint`, `typecheck`, `test`, `test:e2e`, `e2e:setup`, `build`
+- `package.json` — ต้องมี script `lint`, `typecheck`, `test`, `build` และ field `"packageManager": "pnpm@<version>"` (จำเป็นสำหรับ `pnpm/action-setup`)
+  - `test:e2e` + `e2e:setup` เป็น optional: CI จะข้าม job e2e พร้อม warning จนกว่าจะมีทั้งสอง script
+- `pnpm-lock.yaml` — ต้อง commit ไว้ (workflow ทุกตัวใช้ `--frozen-lockfile`)
+- `.gitignore` — kit มีให้แล้ว (กัน `.env*`, key material, build output) ถ้า repo มีอยู่แล้วให้ merge ส่วน Secrets เข้าไป
 - Playwright — tag test สำคัญด้วย `@smoke` (staging) และ `@smoke-prod` (production, อ่านอย่างเดียว ไม่สร้าง order จริง)
+
+> ⚠️ kit นี้ไม่มีโค้ดแอปอยู่ในตัว — workflow ทั้งหมดจะ fail ตั้งแต่ `pnpm install` จนกว่าจะ copy เข้า repo ที่มี `package.json` + lockfile ของจริง
 
 **3. ติดตั้ง Claude GitHub App** → https://github.com/apps/claude
 หรือเปิด Claude Code ใน repo แล้วพิมพ์ `/install-github-app`
