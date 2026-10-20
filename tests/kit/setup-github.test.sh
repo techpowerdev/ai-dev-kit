@@ -41,6 +41,57 @@ check "production needs a reviewer"        team environments/production '.review
 check "production: protected branches only" team environments/production '.deployment_branch_policy.protected_branches'
 check "post-deploy-report waits 30 min"    team environments/post-deploy-report '.wait_timer == 30'
 
+# Plan limits: a private repo gets a warning; rejected rules still create the environment.
+FAKE_VISIBILITY=private run private 1 --solo
+if grep -q "is private. Required reviewers" "$tmp/private.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ private repo should warn about Gate 4"; fi
+check "private repo that accepts the rules keeps the reviewer" private environments/production '.reviewers | length == 1'
+if grep -q "Gate 4 may NOT be enforced" "$tmp/private.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ private repo should repeat the Gate 4 warning at the end"; fi
+if grep -q "Required reviewers (Gate 4) and wait timers only" "$tmp/solo.out" || grep -q "NOT enforced" "$tmp/solo.out"; then fail=$((fail+1)); echo "   ✗ public repo should not warn"; else pass=$((pass+1)); fi
+FAKE_VISIBILITY=internal run internal 1 --solo
+if grep -q "NOT enforced" "$tmp/internal.out"; then fail=$((fail+1)); echo "   ✗ internal (Enterprise) repo should not warn"; else pass=$((pass+1)); fi
+FAKE_VISIBILITY=private FAKE_REJECT_RULES=1 run rejected 1 --solo --allow-unprotected-prod
+check "rejected rules: production still created" rejected environments/production '.deployment_branch_policy.protected_branches and (.reviewers == null)'
+check "rejected rules: report env still created" rejected environments/post-deploy-report '.wait_timer == null'
+if grep -q "rejected the protection rules for 'production'" "$tmp/rejected.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ rejected rules should be reported"; fi
+if grep -q "requires approval from" "$tmp/rejected.out"; then fail=$((fail+1)); echo "   ✗ must not claim Gate 4 when rules were rejected"; else pass=$((pass+1)); fi
+# expect_stop <name> <description> [env...]: the script must exit non-zero
+expect_stop() {  # expect_stop <name> <description> [VAR=value...] [-- extra script args]
+  local name="$1" desc="$2"; shift 2
+  local envs=() extra=()
+  while (( $# )); do [[ "$1" == -- ]] && { shift; extra=("$@"); break; }; envs+=("$1"); shift; done
+  if env "${envs[@]}" FAKE_GH_LOG="$tmp/$name.log" FAKE_HAS_PKG=1 PATH="$PWD/tests/kit/fake-gh:$PATH" \
+       bash scripts/setup-github.sh owner/repo me --solo ${extra[@]+"${extra[@]}"} >"$tmp/$name.out" 2>&1; then
+    fail=$((fail+1)); echo "   ✗ $desc"
+  else pass=$((pass+1)); fi
+}
+# expect_ok <name> <description> [env...]: the script must exit 0
+expect_ok() {
+  local name="$1" desc="$2"; shift 2
+  if env "$@" FAKE_GH_LOG="$tmp/$name.log" FAKE_HAS_PKG=1 PATH="$PWD/tests/kit/fake-gh:$PATH" \
+       bash scripts/setup-github.sh owner/repo me --solo >"$tmp/$name.out" 2>&1; then
+    pass=$((pass+1))
+  else fail=$((fail+1)); echo "   ✗ $desc"; fi
+}
+expect_stop rejected_noflag "private 422 without --allow-unprotected-prod must stop" FAKE_VISIBILITY=private FAKE_REJECT_RULES=1
+if grep -q "allow-unprotected-prod" "$tmp/rejected_noflag.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ the stop message should name the flag"; fi
+if grep -q "environments/production" "$tmp/rejected_noflag.log" 2>/dev/null; then fail=$((fail+1)); echo "   ✗ without the flag, production must not be created without rules"; else pass=$((pass+1)); fi
+if grep -q "Gate 4 (approval before production) is OFF" "$tmp/rejected.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ with the flag, the end banner should say Gate 4 is OFF"; fi
+expect_stop fallbackfail "private: if the fallback PUT also fails, stop" FAKE_VISIBILITY=private FAKE_REJECT_ALL_ENV=1 -- --allow-unprotected-prod
+if grep -q "rejected the protection rules for 'production'" "$tmp/fallbackfail.out" && grep -q "even without protection rules" "$tmp/fallbackfail.out"; then
+  pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ fallbackfail did not reach the fallback branch"; fi
+expect_stop private403 "private: a non-422 error (403) must stop, not drop Gate 4" FAKE_VISIBILITY=private FAKE_REJECT_RULES=1 FAKE_REJECT_STATUS=403
+if grep -q 'environments/production' "$tmp/private403.log" 2>/dev/null; then fail=$((fail+1)); echo "   ✗ 403: production must not be created without rules"; else pass=$((pass+1)); fi
+
+# On a public repo a rejection is never a plan limit: stop, and never create production without rules.
+if FAKE_VISIBILITY=public FAKE_REJECT_RULES=1 FAKE_GH_LOG="$tmp/pubreject.log" FAKE_HAS_PKG=1 \
+     PATH="$PWD/tests/kit/fake-gh:$PATH" bash scripts/setup-github.sh owner/repo me --solo >"$tmp/pubreject.out" 2>&1; then
+  fail=$((fail+1)); echo "   ✗ public repo: a rejected Gate 4 must stop the script"
+else pass=$((pass+1)); fi
+if grep -q 'environments/production' "$tmp/pubreject.log" 2>/dev/null; then
+  fail=$((fail+1)); echo "   ✗ public repo: production must not be created without its rules"
+else pass=$((pass+1)); fi
+if grep -q "HTTP 422" "$tmp/pubreject.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ the real GitHub error should be shown"; fi
+
 if ! grep -q "Mode: solo" "$tmp/solo.out"; then fail=$((fail+1)); echo "   ✗ solo mode not reported"; else pass=$((pass+1)); fi
 if PATH="$PWD/tests/kit/fake-gh:$PATH" FAKE_GH_LOG=/dev/null bash scripts/setup-github.sh o/r me --bogus >/dev/null 2>&1; then
   fail=$((fail+1)); echo "   ✗ unknown flag should exit non-zero"

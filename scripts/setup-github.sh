@@ -10,18 +10,31 @@
 #              the rules apply to admins too (no bypass). Production deploys still
 #              wait for you to click "Approve and deploy" (Gate 4).
 #
+# Plan limits: environment required reviewers (Gate 4) and wait timers work only on
+# public repos, or on private repos with GitHub Enterprise. On a private repo with
+# GitHub Free, Pro or Team, GitHub does not enforce them. This script warns about it.
+# https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments
+#
+#   --allow-unprotected-prod
+#              Only for private repos without Enterprise: if GitHub rejects the
+#              environment protection rules (HTTP 422), create production and
+#              post-deploy-report without them instead of stopping. Gate 4 is then off.
+#
 # Safe to re-run: every call is an idempotent PUT/PATCH.
 set -euo pipefail
 
-usage="usage: setup-github.sh owner/repo reviewer-username [--solo]"
+usage="usage: setup-github.sh owner/repo reviewer-username [--solo] [--allow-unprotected-prod]"
 REPO="${1:?$usage}"
 REVIEWER="${2:?$usage}"
 MODE="team"
-case "${3:-}" in
-  "")     ;;
-  --solo) MODE="solo" ;;
-  *)      echo "$usage" >&2; exit 1 ;;
-esac
+ALLOW_UNPROTECTED=false
+for arg in "${@:3}"; do
+  case "$arg" in
+    --solo) MODE="solo" ;;
+    --allow-unprotected-prod) ALLOW_UNPROTECTED=true ;;
+    *) echo "$usage" >&2; exit 1 ;;
+  esac
+done
 echo "==> Mode: $MODE"
 
 echo "==> Labels"
@@ -82,36 +95,80 @@ echo "   main: $reviews_msg, $checks_msg, no force push"
 
 echo "==> Environments"
 REVIEWER_ID=$(gh api "users/$REVIEWER" --jq .id)
+VISIBILITY=$(gh api "repos/$REPO" --jq .visibility)
+GATE4_OFF=false
+if [[ "$VISIBILITY" == "private" ]]; then
+  echo "   ⚠️  $REPO is $VISIBILITY. Required reviewers (Gate 4) and wait timers only work on"
+  echo "       public repos or with GitHub Enterprise. On Free, Pro or Team, production deploys"
+  echo "       will NOT wait for approval and the post-deploy report will not wait 30 minutes."
+fi
 gh api -X PUT "repos/$REPO/environments/preview" >/dev/null
 gh api -X PUT "repos/$REPO/environments/staging" --input - >/dev/null <<JSON
 { "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false } }
 JSON
 # prevent_self_review stays false so a solo maintainer can approve their own deploy.
 # In a team, consider setting it to true so the person who merged is not the one who ships.
-gh api -X PUT "repos/$REPO/environments/production" --input - >/dev/null <<JSON
-{
-  "wait_timer": 0,
-  "prevent_self_review": false,
-  "reviewers": [ { "type": "User", "id": $REVIEWER_ID } ],
-  "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false }
+# Creates an environment with its protection rules. Gate 4 is never dropped unless you
+# ask for it: on a private repo GitHub may answer 422 because the plan does not include
+# the rules (or because of a bad reviewer). Without --allow-unprotected-prod that stops
+# the script with GitHub's error. With the flag, the environment is created without the
+# rules and the caller is told (return 1). Any other failure always stops the script.
+put_env() {  # put_env <name> <json-with-rules> <json-without-rules>
+  local err
+  if err="$(gh api -X PUT "repos/$REPO/environments/$1" --input - 2>&1 >/dev/null <<<"$2")"; then
+    return 0
+  fi
+  if [[ "$VISIBILITY" == "private" && "$err" == *"HTTP 422"* && "$ALLOW_UNPROTECTED" != true ]]; then
+    echo "   ✗ GitHub rejected the protection rules for '$1' on this private repo:" >&2
+    echo "     $err" >&2
+    echo "     On GitHub Free/Pro/Team this is the plan limit. Check the reviewer name first; if it is" >&2
+    echo "     the plan, re-run with --allow-unprotected-prod to create '$1' without Gate 4." >&2
+    exit 1
+  fi
+  if [[ "$VISIBILITY" == "private" && "$err" == *"HTTP 422"* ]]; then
+    echo "   ⚠️  GitHub rejected the protection rules for '$1' (--allow-unprotected-prod given):"
+    echo "       $err"
+    if ! gh api -X PUT "repos/$REPO/environments/$1" --input - >/dev/null <<<"$3"; then
+      echo "   ✗ Could not create '$1' even without protection rules." >&2
+      exit 1
+    fi
+    echo "       Created '$1' without them."
+    GATE4_OFF=true
+    return 1
+  fi
+  echo "   ✗ Could not create environment '$1' with its protection rules:" >&2
+  echo "     $err" >&2
+  exit 1
 }
-JSON
-echo "   production: requires approval from @$REVIEWER (👤 Gate 4)"
+BRANCHES='"deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false }'
+if put_env production \
+  "{ \"wait_timer\": 0, \"prevent_self_review\": false, \"reviewers\": [ { \"type\": \"User\", \"id\": $REVIEWER_ID } ], $BRANCHES }" \
+  "{ $BRANCHES }"; then
+  if [[ "$VISIBILITY" == "public" ]]; then
+    echo "   production: requires approval from @$REVIEWER (👤 Gate 4)"
+  else
+    echo "   production: reviewer @$REVIEWER set, but see the warning above (may not be enforced)"
+  fi
+fi
 # Holds the AI post-deploy report for 30 min of real traffic without occupying a runner.
-# Wait timers need a public repo, or GitHub Pro/Team/Enterprise for private repos.
-gh api -X PUT "repos/$REPO/environments/post-deploy-report" --input - >/dev/null <<JSON
-{
-  "wait_timer": 30,
-  "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false }
-}
-JSON
-echo "   post-deploy-report: 30 min wait timer before the AI health report"
+if put_env post-deploy-report "{ \"wait_timer\": 30, $BRANCHES }" "{ $BRANCHES }"; then
+  echo "   post-deploy-report: 30 min wait timer before the AI health report"
+fi
 
 echo "==> Repo settings"
 gh api -X PATCH "repos/$REPO" -f delete_branch_on_merge=true -f allow_squash_merge=true \
   -f allow_merge_commit=false -f allow_rebase_merge=false >/dev/null
 
 echo
+if [[ "$GATE4_OFF" == true ]]; then
+  echo "⚠️  Gate 4 (approval before production) is OFF: production was created without reviewers."
+  echo "   See docs/getting-started.md step 0 before setting PRODUCTION_DEPLOY_TOKEN."
+  echo
+elif [[ "$VISIBILITY" == "private" ]]; then
+  echo "⚠️  Gate 4 may NOT be enforced: GitHub accepts the reviewer on private Free/Pro/Team repos"
+  echo "   but only enforces it on Enterprise. See docs/getting-started.md step 0."
+  echo
+fi
 echo "✅ Done. Remaining manual steps:"
 echo "  1. Install the Claude GitHub App:  https://github.com/apps/claude"
 echo "  2. Add ONE Claude credential (AI jobs skip with a warning until one is set):"
