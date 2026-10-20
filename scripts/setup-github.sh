@@ -15,18 +15,26 @@
 # GitHub Free, Pro or Team, GitHub does not enforce them. This script warns about it.
 # https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments
 #
+#   --allow-unprotected-prod
+#              Only for private repos without Enterprise: if GitHub rejects the
+#              environment protection rules (HTTP 422), create production and
+#              post-deploy-report without them instead of stopping. Gate 4 is then off.
+#
 # Safe to re-run: every call is an idempotent PUT/PATCH.
 set -euo pipefail
 
-usage="usage: setup-github.sh owner/repo reviewer-username [--solo]"
+usage="usage: setup-github.sh owner/repo reviewer-username [--solo] [--allow-unprotected-prod]"
 REPO="${1:?$usage}"
 REVIEWER="${2:?$usage}"
 MODE="team"
-case "${3:-}" in
-  "")     ;;
-  --solo) MODE="solo" ;;
-  *)      echo "$usage" >&2; exit 1 ;;
-esac
+ALLOW_UNPROTECTED=false
+for arg in "${@:3}"; do
+  case "$arg" in
+    --solo) MODE="solo" ;;
+    --allow-unprotected-prod) ALLOW_UNPROTECTED=true ;;
+    *) echo "$usage" >&2; exit 1 ;;
+  esac
+done
 echo "==> Mode: $MODE"
 
 echo "==> Labels"
@@ -100,18 +108,25 @@ gh api -X PUT "repos/$REPO/environments/staging" --input - >/dev/null <<JSON
 JSON
 # prevent_self_review stays false so a solo maintainer can approve their own deploy.
 # In a team, consider setting it to true so the person who merged is not the one who ships.
-# Creates an environment with its protection rules. Only one failure is tolerated: on a
-# non-public repo, GitHub may answer 422 because the plan does not include the rules.
-# Then the environment is created without them and the caller is told (return 1).
-# Any other failure (auth, network, a reviewer without access, a 422 on a public repo)
-# shows GitHub's error and stops the script, so Gate 4 is never dropped silently.
+# Creates an environment with its protection rules. Gate 4 is never dropped unless you
+# ask for it: on a private repo GitHub may answer 422 because the plan does not include
+# the rules (or because of a bad reviewer). Without --allow-unprotected-prod that stops
+# the script with GitHub's error. With the flag, the environment is created without the
+# rules and the caller is told (return 1). Any other failure always stops the script.
 put_env() {  # put_env <name> <json-with-rules> <json-without-rules>
   local err
   if err="$(gh api -X PUT "repos/$REPO/environments/$1" --input - 2>&1 >/dev/null <<<"$2")"; then
     return 0
   fi
+  if [[ "$VISIBILITY" == "private" && "$err" == *"HTTP 422"* && "$ALLOW_UNPROTECTED" != true ]]; then
+    echo "   ✗ GitHub rejected the protection rules for '$1' on this private repo:" >&2
+    echo "     $err" >&2
+    echo "     On GitHub Free/Pro/Team this is the plan limit. Check the reviewer name first; if it is" >&2
+    echo "     the plan, re-run with --allow-unprotected-prod to create '$1' without Gate 4." >&2
+    exit 1
+  fi
   if [[ "$VISIBILITY" == "private" && "$err" == *"HTTP 422"* ]]; then
-    echo "   ⚠️  GitHub rejected the protection rules for '$1' on this private repo (likely the plan limit):"
+    echo "   ⚠️  GitHub rejected the protection rules for '$1' (--allow-unprotected-prod given):"
     echo "       $err"
     if ! gh api -X PUT "repos/$REPO/environments/$1" --input - >/dev/null <<<"$3"; then
       echo "   ✗ Could not create '$1' even without protection rules." >&2
@@ -145,9 +160,13 @@ gh api -X PATCH "repos/$REPO" -f delete_branch_on_merge=true -f allow_squash_mer
   -f allow_merge_commit=false -f allow_rebase_merge=false >/dev/null
 
 echo
-if [[ "$GATE4_OFF" == true || "$VISIBILITY" == "private" ]]; then
-  echo "⚠️  Gate 4 (approval before production) is NOT enforced on this repo. See the warnings above"
-  echo "   and docs/getting-started.md step 0 before setting PRODUCTION_DEPLOY_TOKEN."
+if [[ "$GATE4_OFF" == true ]]; then
+  echo "⚠️  Gate 4 (approval before production) is OFF: production was created without reviewers."
+  echo "   See docs/getting-started.md step 0 before setting PRODUCTION_DEPLOY_TOKEN."
+  echo
+elif [[ "$VISIBILITY" == "private" ]]; then
+  echo "⚠️  Gate 4 may NOT be enforced: GitHub accepts the reviewer on private Free/Pro/Team repos"
+  echo "   but only enforces it on Enterprise. See docs/getting-started.md step 0."
   echo
 fi
 echo "✅ Done. Remaining manual steps:"

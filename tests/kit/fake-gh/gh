@@ -4,7 +4,8 @@
 # FAKE_HAS_PKG=1 makes "contents/package.json" exist on the default branch.
 # FAKE_VISIBILITY (default public) is the repo visibility.
 # FAKE_REJECT_RULES=1 rejects environment PUTs that carry reviewers or a wait timer.
-# FAKE_REJECT_ALL_ENV=1 rejects every environment PUT. FAKE_REJECT_STATUS sets the HTTP status (default 422).
+# FAKE_REJECT_ALL_ENV=1 rejects every PUT to the production and post-deploy-report environments, with or
+# without rules (staging and preview still work). FAKE_REJECT_STATUS sets the HTTP status (default 422).
 set -euo pipefail
 args="$*"
 # check-review-posted.test.sh: serve canned API responses from $FAKE_GH_RESPONSES.
@@ -22,7 +23,7 @@ esac
 if [[ "$args" == *"--input -"* ]]; then
   body="$(cat)"
   if [[ "$args" == *environments/* ]]; then
-    if [[ "${FAKE_REJECT_ALL_ENV:-0}" == 1 ]] || { [[ "${FAKE_REJECT_RULES:-0}" == 1 ]] \
+    if { [[ "${FAKE_REJECT_ALL_ENV:-0}" == 1 && "$args" =~ environments/(production|post-deploy-report) ]]; } || { [[ "${FAKE_REJECT_RULES:-0}" == 1 ]] \
          && printf '%s' "$body" | jq -e '(.reviewers // [] | length) > 0 or (.wait_timer // 0) > 0' >/dev/null; }; then
       echo "gh: protection rules not available (HTTP ${FAKE_REJECT_STATUS:-422})" >&2; exit 1
     fi
