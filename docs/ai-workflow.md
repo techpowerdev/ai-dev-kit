@@ -97,10 +97,16 @@
 | Bash | `git reset --hard origin...` |
 | Bash | `gh pr merge` |
 | Bash | `gh release` ทุกคำสั่งย่อย ยกเว้น `list`, `view`, `download`, `verify`, `verify-asset` |
-| Bash | คำที่เป็น path ของไฟล์ `.env` หรือ `.env.<อะไรก็ได้>` ยกเว้น `.env.example`, `.env.template`, `.env.sample` |
+| Bash | คำที่อ้างถึงไฟล์ `.env` หรือ `.env.<อะไรก็ได้>` (ยกเว้น `.env.example`, `.env.template`, `.env.sample`), `.git/config` หรือ `/proc/*/environ` รวมถึง glob หรือ brace ที่อาจขยายเป็นไฟล์เหล่านี้ เช่น `.en*` หรือ `{.e,x}nv` hook แยกคำตามช่องว่าง, การขึ้นบรรทัดใหม่, backtick และเครื่องหมาย `; \| & < > ( ) = :` ถอด `$'...'` และตัด quote กับ backslash ก่อนเช็ค pattern ของ grep อย่าง `"\.env"` จึงโดนด้วย ให้เขียนเป็น `"[.]env"` แทน |
+| Bash (เฉพาะใน GitHub Actions) | `gh pr ...` หรือ `gh issue ...` ที่มี `$(...)` หรือใช้ `--body-file` / `-F` กับ path ที่ไม่ใช่ path ธรรมดาใน repo (มี `$`, `~`, glob, `..`, เป็น absolute path หรืออยู่ใน `.git/`) ช่วยลดโอกาสที่ prompt injection จะสั่งโพสต์ไฟล์ลับเป็น comment แต่**กันไม่ได้ทุกทาง** |
+| Grep / Glob | path หรือ pattern ที่ชี้ไปยังไฟล์ secret หรือ credential ตามกฎเดียวกับ Read และการค้นใน `.git/` |
 | Bash | `env` หรือ `printenv` เปล่าๆ และ `printenv`/`env` ตามด้วยชื่อตัวแปรที่มี `KEY`, `SECRET`, `TOKEN`, `PASSWORD` หรือ `DATABASE_URL` |
 | Bash | `psql`, `pg_dump` หรือ `medusa db:migrate` ที่มีคำว่า `prod` หรือ `staging` |
-| Read / Edit / Write | ไฟล์ `.env` ตามกฎเดียวกับข้างบน และ Edit/Write ไฟล์ `.pem`, `.key`, `.p12` |
+| Read / Edit / Write | ไฟล์ `.env` ตามกฎเดียวกับข้างบน, Read ไฟล์ `.git/config` และ `/proc/*/environ` และ Edit/Write ไฟล์ `.pem`, `.key`, `.p12` |
+
+hook ตรวจจาก**ข้อความ**ของคำสั่ง ไม่ได้รันคำสั่งจริง จึงเป็นแค่ best effort ชั้นป้องกันหลักคือ `--allowedTools` ของแต่ละ workflow, deny list ใน `settings.json` และ `persist-credentials: false` บน checkout ของ job Claude ที่ไม่ต้อง push ถ้า hook เกิด error เช่นไม่มี `jq` จะบล็อกไว้ก่อน
+
+**ทางเลี่ยงที่รู้อยู่และยังไม่ได้ปิด:** backtick ในคำสั่ง, quote หรือ backslash ที่แทรกในคำว่า `gh`, process substitution, `gh api` และ `gh gist`, symlink, brace ซ้อนกันเกิน 3 ชั้น, locale quoting (`$"..."`), การใช้ `IFS` และตัวแปรที่ตั้งไว้นอกคำสั่ง
 
 - **เมื่อคำต้องห้ามอยู่แค่ในข้อความ** เช่นข้อความ commit ที่พูดถึง `.env` ให้เขียนข้อความลงไฟล์ก่อน แล้วใช้ `git commit -F <file>` หรือ `gh pr create --body-file <file>` ใช้ได้เฉพาะกรณีนี้ **ห้ามใช้เลี่ยงสิ่งที่ hook ตั้งใจบล็อก** ซึ่งยังถูกกันโดย `settings.json` และ branch protection อยู่ดี
 - **`rm -rf` ถูก deny ใน `settings.json`:** ใช้โฟลเดอร์ใหม่จาก `mktemp -d` แทนการลบแล้วสร้างใหม่

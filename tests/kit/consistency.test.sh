@@ -99,6 +99,13 @@ for job in spec plan-and-build build-high-risk; do
 done
 hook="$(node -e 'const s=require("./.claude/settings.json");console.log(s.hooks.PreToolUse[0].hooks[0].command)' | awk '{print $NF}')"
 expect "settings.json hook '$hook' exists and is executable" test -x "$hook"
+matcher="$(node -e 'const s=require("./.claude/settings.json");console.log(s.hooks.PreToolUse[0].matcher)')"
+for t in Bash Read Grep Glob Edit Write MultiEdit NotebookEdit; do
+  expect "the guard hook runs for $t (matcher: $matcher)" grep -qE "(^|\\|)$t(\\||$)" <<<"$matcher"
+done
+for wf in claude-review preview deploy; do
+  expect "$wf.yml: the Claude job's checkout does not persist credentials" grep -q 'persist-credentials: false' ".github/workflows/$wf.yml"
+done
 
 # --- deploy.sh contract -------------------------------------------------------------
 out="$(mktemp)"; trap 'rm -f "$out"' EXIT

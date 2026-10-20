@@ -26,7 +26,7 @@ jobs:
       - if: env.HAS_CLAUDE_AUTH != 'true'
         run: echo "::warning::No Claude credential — skipping AI review. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (see README-AI-SETUP.md)."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, persist-credentials: false }   # Claude never pushes here; keep the token out of .git/config
       - name: Snapshot CI helpers
         # Copied before Claude runs, so Claude's file edits cannot change the scripts that
         # later steps run. (Code Claude may run, e.g. pnpm test, is not covered by this.)
