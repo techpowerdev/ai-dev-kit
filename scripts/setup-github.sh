@@ -10,6 +10,11 @@
 #              the rules apply to admins too (no bypass). Production deploys still
 #              wait for you to click "Approve and deploy" (Gate 4).
 #
+# Plan limits: environment required reviewers (Gate 4) and wait timers work only on
+# public repos, or on private repos with GitHub Enterprise. On a private repo with
+# GitHub Free, Pro or Team, GitHub does not enforce them. This script warns about it.
+# https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments
+#
 # Safe to re-run: every call is an idempotent PUT/PATCH.
 set -euo pipefail
 
@@ -82,30 +87,41 @@ echo "   main: $reviews_msg, $checks_msg, no force push"
 
 echo "==> Environments"
 REVIEWER_ID=$(gh api "users/$REVIEWER" --jq .id)
+VISIBILITY=$(gh api "repos/$REPO" --jq .visibility)
+if [[ "$VISIBILITY" != "public" ]]; then
+  echo "   ⚠️  $REPO is $VISIBILITY. Required reviewers (Gate 4) and wait timers only work on"
+  echo "       public repos or with GitHub Enterprise. On Free, Pro or Team, production deploys"
+  echo "       will NOT wait for approval and the post-deploy report will not wait 30 minutes."
+fi
 gh api -X PUT "repos/$REPO/environments/preview" >/dev/null
 gh api -X PUT "repos/$REPO/environments/staging" --input - >/dev/null <<JSON
 { "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false } }
 JSON
 # prevent_self_review stays false so a solo maintainer can approve their own deploy.
 # In a team, consider setting it to true so the person who merged is not the one who ships.
-gh api -X PUT "repos/$REPO/environments/production" --input - >/dev/null <<JSON
-{
-  "wait_timer": 0,
-  "prevent_self_review": false,
-  "reviewers": [ { "type": "User", "id": $REVIEWER_ID } ],
-  "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false }
+# If GitHub rejects the protection rules (possible on a private repo without Enterprise),
+# still create the environment so deploys have somewhere to go, and say so loudly.
+put_env() {  # put_env <name> <json-with-rules> <json-without-rules>
+  if ! gh api -X PUT "repos/$REPO/environments/$1" --input - >/dev/null 2>&1 <<<"$2"; then
+    echo "   ⚠️  GitHub rejected the protection rules for '$1' (plan limit?). Created it without them."
+    gh api -X PUT "repos/$REPO/environments/$1" --input - >/dev/null <<<"$3"
+    return 1
+  fi
 }
-JSON
-echo "   production: requires approval from @$REVIEWER (👤 Gate 4)"
+BRANCHES='"deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false }'
+if put_env production \
+  "{ \"wait_timer\": 0, \"prevent_self_review\": false, \"reviewers\": [ { \"type\": \"User\", \"id\": $REVIEWER_ID } ], $BRANCHES }" \
+  "{ $BRANCHES }"; then
+  if [[ "$VISIBILITY" == "public" ]]; then
+    echo "   production: requires approval from @$REVIEWER (👤 Gate 4)"
+  else
+    echo "   production: reviewer @$REVIEWER set, but see the warning above (may not be enforced)"
+  fi
+fi
 # Holds the AI post-deploy report for 30 min of real traffic without occupying a runner.
-# Wait timers need a public repo, or GitHub Pro/Team/Enterprise for private repos.
-gh api -X PUT "repos/$REPO/environments/post-deploy-report" --input - >/dev/null <<JSON
-{
-  "wait_timer": 30,
-  "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false }
-}
-JSON
-echo "   post-deploy-report: 30 min wait timer before the AI health report"
+if put_env post-deploy-report "{ \"wait_timer\": 30, $BRANCHES }" "{ $BRANCHES }"; then
+  echo "   post-deploy-report: 30 min wait timer before the AI health report"
+fi
 
 echo "==> Repo settings"
 gh api -X PATCH "repos/$REPO" -f delete_branch_on_merge=true -f allow_squash_merge=true \

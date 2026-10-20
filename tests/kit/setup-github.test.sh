@@ -41,6 +41,18 @@ check "production needs a reviewer"        team environments/production '.review
 check "production: protected branches only" team environments/production '.deployment_branch_policy.protected_branches'
 check "post-deploy-report waits 30 min"    team environments/post-deploy-report '.wait_timer == 30'
 
+# Plan limits: a private repo gets a warning; rejected rules still create the environment.
+run private 1 --solo   # FAKE_VISIBILITY is read below via env
+if grep -q "is private" "$tmp/private.out"; then fail=$((fail+1)); echo "   ✗ (setup) FAKE_VISIBILITY not applied"; fi
+FAKE_VISIBILITY=private run private 1 --solo
+if grep -q "is private. Required reviewers" "$tmp/private.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ private repo should warn about Gate 4"; fi
+if grep -q "is public" "$tmp/solo.out" || grep -q "Required reviewers (Gate 4) and wait timers only" "$tmp/solo.out"; then fail=$((fail+1)); echo "   ✗ public repo should not warn"; else pass=$((pass+1)); fi
+FAKE_VISIBILITY=private FAKE_REJECT_RULES=1 run rejected 1 --solo
+check "rejected rules: production still created" rejected environments/production '.deployment_branch_policy.protected_branches and (.reviewers == null)'
+check "rejected rules: report env still created" rejected environments/post-deploy-report '.wait_timer == null'
+if grep -q "rejected the protection rules for 'production'" "$tmp/rejected.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ rejected rules should be reported"; fi
+if grep -q "requires approval from" "$tmp/rejected.out"; then fail=$((fail+1)); echo "   ✗ must not claim Gate 4 when rules were rejected"; else pass=$((pass+1)); fi
+
 if ! grep -q "Mode: solo" "$tmp/solo.out"; then fail=$((fail+1)); echo "   ✗ solo mode not reported"; else pass=$((pass+1)); fi
 if PATH="$PWD/tests/kit/fake-gh:$PATH" FAKE_GH_LOG=/dev/null bash scripts/setup-github.sh o/r me --bogus >/dev/null 2>&1; then
   fail=$((fail+1)); echo "   ✗ unknown flag should exit non-zero"

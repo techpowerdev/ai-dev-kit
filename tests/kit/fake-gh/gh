@@ -2,6 +2,8 @@
 # Fake gh for setup-github.test.sh. Never talks to GitHub.
 # Records every call that sends a JSON body as two lines in $FAKE_GH_LOG: the args, then the body.
 # FAKE_HAS_PKG=1 makes "contents/package.json" exist on the default branch.
+# FAKE_VISIBILITY (default public) is the repo visibility.
+# FAKE_REJECT_RULES=1 rejects environment PUTs that carry reviewers or a wait timer.
 set -euo pipefail
 args="$*"
 # check-review-posted.test.sh: serve canned API responses from $FAKE_GH_RESPONSES.
@@ -14,9 +16,14 @@ fi
 case "$args" in
   *contents/package.json*) [[ "${FAKE_HAS_PKG:-0}" == 1 ]]; exit ;;
   *users/*) echo 12345; exit 0 ;;
+  *"--jq .visibility"*) echo "${FAKE_VISIBILITY:-public}"; exit 0 ;;
 esac
 if [[ "$args" == *"--input -"* ]]; then
   body="$(cat)"
+  if [[ "${FAKE_REJECT_RULES:-0}" == 1 && "$args" == *environments/* ]] \
+     && printf '%s' "$body" | jq -e '(.reviewers // [] | length) > 0 or (.wait_timer // 0) > 0' >/dev/null; then
+    echo "HTTP 422: protection rules not available" >&2; exit 1
+  fi
   printf '%s\n' "$args" >>"$FAKE_GH_LOG"
   printf '%s' "$body" | jq -c . >>"$FAKE_GH_LOG"   # fails the call if the body is not valid JSON
 fi
