@@ -10,7 +10,7 @@
           - "**/auth/**"
           - "**/middlewares*"
           - "**/migrations/**"
-          - ".github/workflows/**"
+          - ".github/**"
           - ".claude/**"
           - "CLAUDE.md"
           - "scripts/**"
