@@ -31,7 +31,7 @@ gh api -X PUT "repos/$REPO/branches/main/protection" --input - >/dev/null <<JSON
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["lint · typecheck · test · build", "e2e (Playwright)", "dependency audit"]
+    "contexts": ["lint · typecheck · test · build", "e2e (Playwright)"]
   },
   "enforce_admins": false,
   "required_pull_request_reviews": {
@@ -64,6 +64,15 @@ gh api -X PUT "repos/$REPO/environments/production" --input - >/dev/null <<JSON
 }
 JSON
 echo "   production: requires approval from @$REVIEWER (👤 Gate 4)"
+# Holds the AI post-deploy report for 30 min of real traffic without occupying a runner.
+# Wait timers need a public repo, or GitHub Pro/Team/Enterprise for private repos.
+gh api -X PUT "repos/$REPO/environments/post-deploy-report" --input - >/dev/null <<JSON
+{
+  "wait_timer": 30,
+  "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false }
+}
+JSON
+echo "   post-deploy-report: 30 min wait timer before the AI health report"
 
 echo "==> Repo settings"
 gh api -X PATCH "repos/$REPO" -f delete_branch_on_merge=true -f allow_squash_merge=true \

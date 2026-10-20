@@ -41,7 +41,15 @@ if [[ "$tool" == "Bash" ]]; then
 
   # --- No merging / releasing — humans do that ---------------------------
   [[ "$cmd" =~ gh[[:space:]]+pr[[:space:]]+merge ]] && block "merging is a human gate"
-  [[ "$cmd" =~ gh[[:space:]]+release ]] && block "releasing is a human gate"
+  # Read-only release subcommands are fine (e.g. downloading a tool's binary).
+  # Everything else — create, edit, delete, upload, and any future subcommand — is blocked.
+  # Checks every "gh release <sub>" in the command, so chaining with && cannot sneak one through.
+  while read -r sub; do
+    case "$sub" in
+      list|view|download|verify|verify-asset) ;;
+      *) block "releasing is a human gate (gh release ${sub:-<none>})" ;;
+    esac
+  done < <(printf '%s\n' "$cmd" | grep -oE 'gh[[:space:]]+release([[:space:]]+[^[:space:];&|]+)?' | awk '{print $3}')
 
   # --- No secrets in output ----------------------------------------------
   # Check each token that looks like a path; this ignores words inside strings/heredocs

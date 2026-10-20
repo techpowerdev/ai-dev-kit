@@ -1,0 +1,25 @@
+# Keeps the SHA-pinned actions in .github/workflows up to date.
+# Dependabot updates both the SHA and the "# vX.Y.Z" comment.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+    labels: ["dependencies"]
+
+  # TODO: enable once the repo has a root package.json + pnpm-lock.yaml.
+  # The "npm" ecosystem also handles pnpm workspaces.
+  # - package-ecosystem: npm
+  #   directory: /
+  #   schedule:
+  #     interval: weekly
+  #   open-pull-requests-limit: 5
+  #   commit-message:
+  #     prefix: "chore(deps)"
+  #   labels: ["dependencies"]

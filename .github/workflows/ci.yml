@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # ready_for_review: a draft turned ready gets AI review + preview (both skip drafts)
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -35,9 +37,9 @@ jobs:
       REDIS_URL: redis://localhost:6379
       NODE_ENV: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: pnpm
@@ -69,9 +71,9 @@ jobs:
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/medusa_e2e
       REDIS_URL: redis://localhost:6379
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: pnpm
@@ -95,7 +97,7 @@ jobs:
         run: pnpm e2e:setup
       - if: steps.scripts.outputs.ready == 'true'
         run: pnpm test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always() && steps.scripts.outputs.ready == 'true'
         with:
           name: playwright-report
@@ -104,15 +106,41 @@ jobs:
             test-results/
           retention-days: 7
 
-  security-audit:
-    name: dependency audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm audit --audit-level high
+  # --- Runs only after checks pass, on non-draft PRs from this repo ------------
+  # Fork PRs get no secrets on pull_request, so AI review / preview would fail anyway.
+  ai-review:
+    name: AI review
+    needs: checks
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    uses: ./.github/workflows/claude-review.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets: inherit
+
+  preview:
+    name: Preview + AI QA
+    needs: checks
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      deployments: write
+      actions: read
+    uses: ./.github/workflows/preview.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets: inherit

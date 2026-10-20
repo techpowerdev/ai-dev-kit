@@ -1,34 +1,29 @@
 # Every PR gets an AI code review (+ security review on high-risk paths)
 # BEFORE a human looks at it. The human then reads the "👀 please look closely at" list.
+#
+# Called from ci.yml only after lint · typecheck · test · build passes, so no tokens are
+# spent reviewing code that does not compile. ci.yml's concurrency group cancels an
+# in-flight review when a new commit is pushed. Permissions are granted by the caller job.
 name: AI review
 
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
-
-concurrency:
-  group: ai-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-  id-token: write
-  actions: read
+  workflow_call:
+    inputs:
+      pr_number:
+        type: number
+        required: true
 
 jobs:
   review:
-    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          prompt: "/review ${{ github.event.pull_request.number }}"
+          prompt: "/review ${{ inputs.pr_number }}"
           claude_args: >-
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr checkout:*)"

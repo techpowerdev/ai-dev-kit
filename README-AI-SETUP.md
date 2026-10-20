@@ -68,7 +68,7 @@ claude
 
 ## ข้อควรรู้
 - **ทำคนเดียว:** GitHub ไม่ให้อนุมัติ PR ของตัวเอง — PR ที่ AI เปิด (ผ่าน Claude app) คุณอนุมัติได้ แต่ PR ที่คุณเปิดเองให้ใช้ทีมช่วย review หรือปรับ branch protection
-- **ค่าใช้จ่าย:** ทุก workflow ใช้ API token + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาที (กิน runner minutes) จะย้ายไปใช้ scheduled task แทนก็ได้
+- **ค่าใช้จ่าย:** ทุก workflow ใช้ API token + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer ใช้ได้กับ public repo หรือ private repo บน GitHub Pro/Team/Enterprise ถ้าไม่มี report จะรันทันทีหลัง deploy)
 - **Model:** ปรับใน frontmatter ของแต่ละ agent (`model: sonnet|opus|haiku|inherit`)
 - **ปรับปรุงต่อเนื่อง:** AI ผิดซ้ำเรื่องไหน → เพิ่มกฎใน `CLAUDE.md` หรือไฟล์ agent นั้น
 
@@ -84,14 +84,15 @@ README-AI-SETUP.md                ไฟล์นี้
 .github/
   ISSUE_TEMPLATE/                 feature, bug
   pull_request_template.md
-  CODEOWNERS · labeler.yml
+  CODEOWNERS · labeler.yml · dependabot.yml (อัปเดต SHA ของ actions)
   workflows/
-    ci.yml                        lint/typecheck/test/build/e2e/audit
+    ci.yml                        lint/typecheck/test/build/e2e → แล้วค่อยเรียก AI review + preview
     ai-pipeline.yml               issue label → spec → plan → build → PR
-    claude-review.yml             AI review ทุก PR
+    claude-review.yml             AI review (เรียกจาก ci.yml หลัง checks ผ่าน)
     claude.yml                    @claude ใน comment
     risk-label.yml                ติด risk:high อัตโนมัติ
-    preview.yml                   preview deploy + AI QA
+    preview.yml                   preview deploy + AI QA (เรียกจาก ci.yml หลัง checks ผ่าน)
+    audit.yml                     pnpm audit: PR ที่แตะ dependency + ทุกสัปดาห์ (ไม่ใช่ required check)
     deploy.yml                    staging → 👤 approve → production → AI report
 docs/
   ai-workflow.md                  คู่มือการทำงาน + gates
