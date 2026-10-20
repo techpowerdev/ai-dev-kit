@@ -139,9 +139,10 @@ jobs:
           claude_args: >-
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Task,Agent,WebFetch,Bash(git log:*),Bash(gh pr list:*),Bash(gh issue create:*),Bash(curl -s:*)"
-      - name: Show why Claude failed
-        # claude-code-action hides Claude's output; this prints only the error message.
-        if: failure() && steps.claude.outcome == 'failure'
+      - name: Show Claude errors and denied tools
+        # claude-code-action hides Claude's output; this prints only errors and denied
+        # tool calls (a denied tool can make a "successful" run silently do nothing).
+        if: always() && (steps.claude.outcome == 'success' || steps.claude.outcome == 'failure')
         env:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
         run: bash scripts/show-claude-error.sh "$EXEC_FILE"

@@ -56,5 +56,18 @@ echo 'not json' >"$tmp/broken.json"
 if out="$(run "$tmp/broken.json")"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ broken: exited non-zero"; fi
 lacks "broken: prints nothing"         "$out" "::error"
 
+# 6. Successful run with a denied tool: warn with the tool and command, no review text
+cat >"$tmp/denied.json" <<'J'
+[{"type":"assistant","message":{"content":[{"type":"text","text":"PRIVATE REVIEW TEXT"}]}},
+ {"type":"result","subtype":"success","is_error":false,"result":"PRIVATE REVIEW TEXT",
+  "permission_denials":[{"tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"gh pr comment 8 --body-file /tmp/review.md"}},
+                        {"tool_name":"Read","tool_use_id":"t2","tool_input":{"file_path":"/etc/hosts"}}]}]
+J
+out="$(run "$tmp/denied.json")"
+has   "denied: bash command shown"     "$out" "::warning title=Claude was denied a tool::Bash: gh pr comment 8 --body-file /tmp/review.md"
+has   "denied: file tool shown"        "$out" "Read: /etc/hosts"
+lacks "denied: no review text"         "$out" "PRIVATE REVIEW TEXT"
+lacks "denied: not reported as error"  "$out" "::error"
+
 echo "   show-claude-error: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

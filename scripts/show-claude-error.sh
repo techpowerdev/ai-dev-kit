@@ -2,10 +2,12 @@
 # Usage: scripts/show-claude-error.sh <claude-execution-output.json>
 #
 # claude-code-action hides Claude's output in logs (it may contain repo content),
-# so a failed run only says "is_error: true". This prints just the error: the
-# result message and Claude's last reply of a run that ended in an error, as
-# GitHub error annotations, plus a hint for common causes. A successful run
-# prints nothing.
+# so a failed run only says "is_error: true". This prints:
+#   - tool calls that were denied permission (any run): tool name + a short input,
+#     because a denied tool can make a "successful" run silently do nothing
+#   - for a run that ended in an error: the result message and Claude's last reply,
+#     plus a hint for common causes
+# A clean successful run prints nothing, so review text never reaches the logs.
 set -euo pipefail
 file="${1:?usage: show-claude-error.sh <execution-file>}"
 
@@ -15,6 +17,16 @@ if [[ ! -s "$file" ]]; then
 fi
 
 # Accepts a JSON array of messages or one JSON message per line.
+denied="$(jq -rs '
+  [ .[] | if type == "array" then .[] else . end ]
+  | .[] | select(.type == "result") | .permission_denials[]?
+  | "\(.tool_name): \((.tool_input.command // .tool_input.file_path // .tool_input.pattern // (.tool_input | tostring))
+      | tostring | gsub("\\s+"; " ") | .[0:160])"
+' "$file" 2>/dev/null | awk '!seen[$0]++' || true)"
+while IFS= read -r line; do
+  [[ -n "$line" ]] && echo "::warning title=Claude was denied a tool::$line — allow it in the workflow's --allowedTools if Claude needs it."
+done <<<"$denied"
+
 msg="$(jq -rs '
   [ .[] | if type == "array" then .[] else . end ] as $m
   | [ $m[] | select(.type == "result" and .is_error == true) ] as $errs
