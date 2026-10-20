@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
 # One-time GitHub setup for the AI + human-in-the-loop workflow.
 # Requires: gh CLI logged in as a repo admin, jq.
-# Usage: scripts/setup-github.sh owner/repo your-github-username
+# Usage: scripts/setup-github.sh owner/repo your-github-username [--solo]
+#
+#   (default)  Team mode: every PR needs 1 approval + CODEOWNERS review.
+#              Admins can still bypass in an emergency.
+#   --solo     One-person repo: GitHub never lets you approve your own PR, so no
+#              approval is required. You must still open a PR and get green CI, and
+#              the rules apply to admins too (no bypass). Production deploys still
+#              wait for you to click "Approve and deploy" (Gate 4).
+#
+# Safe to re-run: every call is an idempotent PUT/PATCH.
 set -euo pipefail
 
-REPO="${1:?usage: setup-github.sh owner/repo reviewer-username}"
-REVIEWER="${2:?usage: setup-github.sh owner/repo reviewer-username}"
+usage="usage: setup-github.sh owner/repo reviewer-username [--solo]"
+REPO="${1:?$usage}"
+REVIEWER="${2:?$usage}"
+MODE="team"
+case "${3:-}" in
+  "")     ;;
+  --solo) MODE="solo" ;;
+  *)      echo "$usage" >&2; exit 1 ;;
+esac
+echo "==> Mode: $MODE"
 
 echo "==> Labels"
 label() { gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force >/dev/null; echo "   $1"; }
@@ -27,19 +44,33 @@ label "area:vendor"        "ededed" ""
 label "dependencies"       "0366d6" ""
 
 echo "==> Branch protection on main"
+# Required CI checks only make sense once the repo has an app to build. Without a root
+# package.json every CI run fails at "pnpm install", so requiring it would lock main.
+if gh api "repos/$REPO/contents/package.json" >/dev/null 2>&1; then
+  STATUS_CHECKS='{ "strict": true, "contexts": ["lint · typecheck · test · build", "e2e (Playwright)"] }'
+  checks_msg="green CI required"
+else
+  STATUS_CHECKS='null'
+  checks_msg="CI NOT required yet"
+  echo "   ⚠️  No package.json on the default branch — skipping required status checks."
+  echo "       Re-run this script after the app code is in to turn them on."
+fi
+
+if [[ "$MODE" == "solo" ]]; then
+  REVIEWS='{ "required_approving_review_count": 0, "require_code_owner_reviews": false, "dismiss_stale_reviews": false, "require_last_push_approval": false }'
+  ENFORCE_ADMINS=true
+  reviews_msg="PR required, no approval (solo), rules apply to admins"
+else
+  REVIEWS='{ "required_approving_review_count": 1, "require_code_owner_reviews": true, "dismiss_stale_reviews": true, "require_last_push_approval": true }'
+  ENFORCE_ADMINS=false
+  reviews_msg="PR + 1 approval + CODEOWNERS"
+fi
+
 gh api -X PUT "repos/$REPO/branches/main/protection" --input - >/dev/null <<JSON
 {
-  "required_status_checks": {
-    "strict": true,
-    "contexts": ["lint · typecheck · test · build", "e2e (Playwright)"]
-  },
-  "enforce_admins": false,
-  "required_pull_request_reviews": {
-    "required_approving_review_count": 1,
-    "require_code_owner_reviews": true,
-    "dismiss_stale_reviews": true,
-    "require_last_push_approval": true
-  },
+  "required_status_checks": $STATUS_CHECKS,
+  "enforce_admins": $ENFORCE_ADMINS,
+  "required_pull_request_reviews": $REVIEWS,
   "restrictions": null,
   "required_conversation_resolution": true,
   "allow_force_pushes": false,
@@ -47,7 +78,7 @@ gh api -X PUT "repos/$REPO/branches/main/protection" --input - >/dev/null <<JSON
   "required_linear_history": true
 }
 JSON
-echo "   main: PR + 1 approval + CODEOWNERS + green CI required, no force push"
+echo "   main: $reviews_msg, $checks_msg, no force push"
 
 echo "==> Environments"
 REVIEWER_ID=$(gh api "users/$REVIEWER" --jq .id)
@@ -55,6 +86,8 @@ gh api -X PUT "repos/$REPO/environments/preview" >/dev/null
 gh api -X PUT "repos/$REPO/environments/staging" --input - >/dev/null <<JSON
 { "deployment_branch_policy": { "protected_branches": true, "custom_branch_policies": false } }
 JSON
+# prevent_self_review stays false so a solo maintainer can approve their own deploy.
+# In a team, consider setting it to true so the person who merged is not the one who ships.
 gh api -X PUT "repos/$REPO/environments/production" --input - >/dev/null <<JSON
 {
   "wait_timer": 0,
