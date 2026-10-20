@@ -1,4 +1,4 @@
-# AI Dev Kit — ติดตั้งใน 30 นาที
+# AI Dev Kit — ติดตั้งใน 30–60 นาที
 
 ชุดนี้ทำให้ repo มีทีม AI agent ทำงานตั้งแต่ issue → spec → code → review → QA → deploy
 โดยคนอนุมัติ 4 จุด (ดูภาพรวมที่ `docs/ai-workflow.md`)
@@ -125,7 +125,7 @@ claude
 ## ข้อควรรู้
 - **ทำคนเดียว:** ใช้ `setup-github.sh ... --solo` (ขั้นตอนที่ 5) GitHub ไม่ให้อนุมัติ PR ของตัวเอง โหมดนี้จึงไม่บังคับ approve แต่ยังบังคับ PR และบังคับ CI เขียวเมื่อ main มี `package.json` แล้ว
 - **หลังเปิด branch protection:** วิธี merge PR, การกด "Update branch" และ PR ของ dependabot ดูที่ [docs/ai-workflow.md](docs/ai-workflow.md) หัวข้อ "Merge PR หลังเปิด branch protection"
-- **ค่าใช้จ่าย:** ทุก workflow ใช้ Claude (ค่า API หรือโควต้า subscription แล้วแต่ credential ที่ตั้ง) + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer ใช้ได้กับ public repo หรือ private repo บน GitHub Pro/Team/Enterprise ถ้าไม่มี report จะรันทันทีหลัง deploy)
+- **ค่าใช้จ่าย:** ทุก workflow ใช้ Claude (ค่า API หรือโควต้า subscription แล้วแต่ credential ที่ตั้ง) + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer และ required reviewers ใช้ได้กับ repo public หรือแพลน Enterprise เท่านั้น บน repo private ของแพลน Free/Pro/Team ทั้ง Gate 4 และการรอ 30 นาทีจะไม่มีผล ดู [getting-started ขั้นที่ 0](docs/getting-started.md))
 - **Model:** ปรับใน frontmatter ของแต่ละ agent (`model: sonnet|opus|haiku|inherit`)
 - **ปรับปรุงต่อเนื่อง:** AI ผิดซ้ำเรื่องไหน → เพิ่มกฎใน `CLAUDE.md` หรือไฟล์ agent นั้น
 
