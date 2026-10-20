@@ -47,9 +47,17 @@ gh secret set SENTRY_READ_TOKEN        # optional, read-only
 
 **5. ตั้ง labels, branch protection, environments อัตโนมัติ**
 ```bash
+# ทีม (มีคน review ให้อย่างน้อย 1 คน)
 ./scripts/setup-github.sh <owner>/<repo> <your-github-username>
+
+# ทำคนเดียว
+./scripts/setup-github.sh <owner>/<repo> <your-github-username> --solo
 ```
+- **ทีม**: ทุก PR ต้องมีคน approve 1 คน + CODEOWNERS, admin ยัง bypass ได้ตอนฉุกเฉิน
+- **`--solo`**: GitHub ไม่ให้ approve PR ตัวเอง จึงไม่บังคับ approve แต่ยังต้องเปิด PR และ CI ต้องเขียว กฎนี้ใช้กับ admin ด้วย (bypass ไม่ได้) ส่วน 👤 Gate 4 ยังต้องกด approve deploy production เอง
+- รันซ้ำได้ เช่นเมื่อเพิ่มคนในทีมแล้วเปลี่ยนจาก `--solo` เป็นโหมดทีม
 > รันหลังจาก push workflow แล้ว และ CI รันผ่านอย่างน้อย 1 ครั้ง เพื่อให้ GitHub รู้จักชื่อ status check
+> ถ้า repo ยังไม่มี `package.json` สคริปต์จะยังไม่บังคับ CI (ไม่งั้น main จะ merge ไม่ได้เลย) ให้รันซ้ำหลังใส่โค้ดแอปแล้ว
 
 **6. ทดลอง**
 1. สร้าง issue จาก template "✨ Feature request" (เรื่องเล็ก ๆ เช่น เปลี่ยนข้อความปุ่ม)
