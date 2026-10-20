@@ -12,11 +12,15 @@
 
 **1. คัดลอกไฟล์เข้า repo**
 ```bash
-cp -r ai-dev-kit/. /path/to/your-repo/
+rsync -a --prune-empty-dirs \
+  --exclude .git --exclude node_modules \
+  --exclude package.json --exclude pnpm-lock.yaml --exclude tests/kit \
+  ai-dev-kit/ /path/to/your-repo/
 cd /path/to/your-repo
 chmod +x scripts/*.sh .claude/hooks/guard.sh
 ```
-(ถ้ามี `.github/` หรือ `CLAUDE.md` อยู่แล้ว ให้ merge ด้วยมือ)
+- **อย่า copy `package.json`, `pnpm-lock.yaml` และ `tests/kit/`** ไฟล์เหล่านี้มีไว้ให้ kit ทดสอบตัวเองเท่านั้น ถ้า copy ไปจะทับไฟล์ของโปรเจกต์
+- ถ้ามี `.github/` หรือ `CLAUDE.md` อยู่แล้ว ให้ merge ด้วยมือ
 
 **2. แก้ให้ตรงโปรเจกต์** — ค้นคำว่า `TODO`
 ```bash
@@ -31,7 +35,7 @@ grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts doc
 - `.gitignore` — kit มีให้แล้ว (กัน `.env*`, key material, build output) ถ้า repo มีอยู่แล้วให้ merge ส่วน Secrets เข้าไป
 - Playwright — tag test สำคัญด้วย `@smoke` (staging) และ `@smoke-prod` (production, อ่านอย่างเดียว ไม่สร้าง order จริง)
 
-> ⚠️ kit นี้ไม่มีโค้ดแอปอยู่ในตัว — workflow ทั้งหมดจะ fail ตั้งแต่ `pnpm install` จนกว่าจะ copy เข้า repo ที่มี `package.json` + lockfile ของจริง
+> ℹ️ `package.json` ของ kit ใช้ทดสอบตัว kit เอง ไม่ใช่ template ให้โปรเจกต์ใช้ — ดูหัวข้อ "ทดสอบตัว kit" ด้านล่าง
 
 **3. ติดตั้ง Claude GitHub App** → https://github.com/apps/claude
 หรือเปิด Claude Code ใน repo แล้วพิมพ์ `/install-github-app`
@@ -108,4 +112,20 @@ docs/
 scripts/
   setup-github.sh                 ตั้งค่า GitHub ครั้งเดียว
   deploy.sh                       (ต้องเติม) deploy ไป host ของคุณ
+package.json · pnpm-lock.yaml     (เฉพาะ kit) ให้ CI ทดสอบตัว kit — ไม่ต้อง copy
+tests/kit/                        (เฉพาะ kit) test ของ hook, setup script และความสอดคล้องของ flow
 ```
+
+## ทดสอบตัว kit (สำหรับคนแก้ kit นี้)
+repo นี้ทดสอบตัวเองด้วย CI ชุดเดียวกับที่โปรเจกต์จะใช้ แต่ไม่มี dependency เลย
+```bash
+pnpm lint        # actionlint (ทุก workflow) + shellcheck (ทุก .sh)
+pnpm typecheck   # syntax ของ shell, JSON, YAML ทุกไฟล์
+pnpm test        # guard hook, setup-github.sh (กับ gh ปลอม) และความสอดคล้องของ flow
+```
+`tests/kit/consistency.test.sh` เช็คว่าชิ้นส่วนของ flow ยังอ้างถึงกันถูก เช่น agent ที่ command เรียกมีอยู่จริง, label ที่ workflow ใช้ถูกสร้างใน setup script, ชื่อ required check ตรงกับ job ใน CI, action ถูก pin ด้วย SHA และไม่มี workflow ไหนให้ Claude merge เองได้ เมื่อแก้ hook ให้เพิ่มเคสใน `tests/kit/guard.test.sh` ทั้งเคสที่ต้องบล็อกและเคสใกล้เคียงที่ต้องผ่าน
+
+ในการรันบน GitHub ของ kit:
+- **AI review, AI QA, post-deploy report** ข้ามพร้อม warning ถ้ายังไม่ได้ตั้ง `ANTHROPIC_API_KEY` ตั้ง key เมื่ออยากทดสอบ flow AI จริง (เสียค่า API ทุก PR)
+- **preview, smoke test, production** ข้ามเพราะ `deploy.sh` เป็น placeholder (ส่ง `configured=false`)
+- **e2e** ข้ามพร้อม warning เพราะไม่มี script `test:e2e`
