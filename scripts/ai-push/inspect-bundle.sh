@@ -30,6 +30,11 @@ while (( $# )); do
 done
 [[ "$mode" =~ ^(pipeline|pr|none)$ && "$number" =~ ^[0-9]+$ && -n "$base" && -n "$in" ]] || { echo "usage: see header" >&2; exit 2; }
 [[ "$base" =~ ^[0-9a-f]{40}$ ]] || ai_fail "base must be a full commit SHA"
+[[ "$mode" != pr || -n "$expected" ]] || ai_fail "--expected-branch is required in pr mode"
+if [[ -n "$labeler" ]]; then
+  [[ -f "$labeler" ]] || ai_fail "Labeler file $labeler not found: cannot decide whether the change is high risk."
+  [[ -n "$(ai_high_risk_globs "$labeler")" ]] || ai_fail "No risk:high globs in $labeler: cannot decide whether the change is high risk."
+fi
 cd "$repo"
 
 nothing() { echo "nothing to push"; ai_output commits 0; exit 0; }
@@ -37,13 +42,20 @@ first_line() { head -n 1 "$1" 2>/dev/null | tr -d '\r' || true; }
 
 # 1. status
 status="$(first_line "$in/status" | LC_ALL=C tr -cd '[:lower:]')"
+claimed="$(first_line "$in/commits" | LC_ALL=C tr -cd '0-9' | cut -c1-6)"
+if [[ "$mode" == none && "$status" != none && "$status" != empty && -n "$status" ]]; then
+  ai_fail "This run may not push, but the artifact says '$status'."
+fi
 case "$status" in
-  ""|empty) nothing ;;
+  ""|empty)
+    (( ${claimed:-0} == 0 )) || ai_fail "The artifact says 'empty' but counts ${claimed} commit(s): make-bundle.sh did not finish."
+    nothing ;;
+  failed) ai_fail "make-bundle.sh failed in the Claude job; see that job's log." ;;
   refused) ai_fail "The Claude job refused to bundle (for example more than one ai/$number-* branch)." ;;
   none)
-    n="$(first_line "$in/commits" | LC_ALL=C tr -cd '0-9' | cut -c1-6)"
-    ai_output commits "${n:-0}"; echo "${n:-0} commit(s) that this run may not push."; exit 0 ;;
-  bundle) ;;
+    [[ "$mode" == none ]] || ai_fail "The artifact says 'none' but this run may push."
+    ai_output commits "${claimed:-0}"; echo "${claimed:-0} commit(s) that this run may not push."; exit 0 ;;
+  bundle) [[ "$mode" != none ]] || ai_fail "Unexpected bundle in mode none." ;;
   *) ai_fail "Unknown bundle status." ;;
 esac
 
@@ -86,7 +98,10 @@ commits="$(ai_git rev-list --count "$base..$tip")"
 (( commits <= 200 )) || ai_fail "$commits commits is more than the 200 allowed in one push."
 
 # 7. files: no AI scratch files committed; report workflow and high-risk paths
-changed="$(ai_git diff --name-only "$base" "$tip")"
+# --no-renames: a rename shows as delete + add, so moving a file out of a guarded
+# directory still counts. quotePath=false and -z: non-ASCII names stay as they are
+# instead of being C-quoted (which would dodge the anchored checks).
+changed="$(ai_git -c core.quotePath=false diff --no-renames --name-only -z "$base" "$tip" | tr '\0' '\n')"
 scratch="$(printf '%s\n' "$changed" | grep -E '(^|/)\.ai-(pr-body|comment|review)\.md$' || true)"
 [[ -z "$scratch" ]] || ai_fail "AI scratch files were committed: $(printf '%s' "$scratch" | tr '\n' ' ')"
 workflows="$(printf '%s\n' "$changed" | grep -c '^\.github/workflows/' || true)"
@@ -108,7 +123,7 @@ fi
 
 # 8. uncommitted work is reported, never pushed (decision 6)
 if [[ -s "$in/uncommitted.txt" ]]; then
-  ai_warn "Claude left uncommitted changes (not pushed): $(head -n 50 "$in/uncommitted.txt" | tr '\n' ' ')"
+  ai_warn "Claude left uncommitted changes (not pushed): $(head -n 50 "$in/uncommitted.txt" | head -c 2000 | tr '\n' ' ')"
 fi
 
 # 9. outputs

@@ -5,7 +5,8 @@
 # whether claude-code-action wrote its own auth). Fails if git in DIR could push
 # without being given a token: an http extraheader, an includeIf (actions/checkout
 # v6+ links its credentials file that way), a credential helper, a remote URL with
-# user info, or a git-credentials-* file in RUNNER_TEMP. Prints key names only,
+# user info, a url.*.insteadOf rewrite (can carry user info), core.askpass, or a
+# git-credentials-* file in RUNNER_TEMP. Prints key names only,
 # never values.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,7 +25,7 @@ done
 found=()
 while IFS= read -r key; do
   [[ -n "$key" ]] && found+=("git config: $key")
-done < <(git -C "$repo" config --name-only --get-regexp '^(http\..*extraheader|includeif\..*|credential\..*)$' 2>/dev/null || true)
+done < <(git -C "$repo" config --name-only --get-regexp '^(http\..*extraheader|includeif\..*|credential\..*|url\..*|core\.askpass)$' 2>/dev/null || true)
 
 while IFS= read -r line; do
   name="${line%%[[:space:]]*}"

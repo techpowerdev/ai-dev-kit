@@ -10,7 +10,10 @@
 #   none      not pushable (fork, non-ai branch, plain issue): only count commits so
 #             the trusted job can explain why nothing was pushed
 #
-# Writes: status (empty|bundle|refused|none), branch, commits, ai.bundle,
+# Must run without secrets: git runs in Claude's checkout, whose .git/config and
+# .gitattributes Claude controlled. Use a fresh, empty --out directory.
+#
+# Writes: status (empty|bundle|refused|none|failed), branch, commits, ai.bundle,
 # uncommitted.txt (working-tree changes, minus .ai-*.md), pr-body.md (copy of
 # .ai-pr-body.md if it is a regular file of at most 60000 bytes).
 set -euo pipefail
@@ -31,21 +34,28 @@ while (( $# )); do
   esac
 done
 [[ "$mode" =~ ^(pipeline|pr|none)$ && -n "$base" && -n "$out" ]] || { echo "usage: see header" >&2; exit 2; }
+[[ "$mode" == pr || "$mode" == none || "$issue" =~ ^[0-9]+$ ]] || { echo "--issue must be a number" >&2; exit 2; }
 mkdir -p "$out"
 cd "$repo"
 
 write() { printf '%s\n' "$2" >"$out/$1"; }
-write status empty; write branch ""; write commits 0
+# Until this script finishes, the artifact says "failed": the trusted job then stops
+# instead of reading a half-written result as "nothing to push".
+write status failed; write branch ""; write commits 0
+# EXIT, not ERR: an ERR trap does not fire inside functions such as ai_git under set -e.
+trap 'rc=$?; if (( rc != 0 )); then write status failed; fi' EXIT
 
 # Working-tree changes Claude did not commit (decision 6: warn, never commit them).
-ai_git status --porcelain --untracked-files=all 2>/dev/null \
-  | awk '{ p = substr($0, 4) } p !~ /(^|\/)\.ai-[^\/]*\.md$/ { print p }' >"$out/uncommitted.txt" || true
+ai_git -c core.quotePath=false status --porcelain=v1 -z --untracked-files=all 2>/dev/null \
+  | tr '\0' '\n' | awk 'length($0) > 3 { p = substr($0, 4); if (p !~ /(^|\/)\.ai-[^\/]*\.md$/) print p }' \
+  >"$out/uncommitted.txt" || true
 
 # PR body: a regular file only (no symlink), capped.
 if [[ -f .ai-pr-body.md && ! -L .ai-pr-body.md ]] && (( $(wc -c <.ai-pr-body.md) <= 60000 )); then
   cp .ai-pr-body.md "$out/pr-body.md"
 fi
 
+write status empty
 case "$mode" in
   pipeline)
     candidates="$(ai_git for-each-ref --format='%(refname:short)' "refs/heads/ai/$issue-*")"

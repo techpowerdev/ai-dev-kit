@@ -36,6 +36,7 @@ cd "$repo"
 ai_git rev-parse --verify --quiet "$tip^{commit}" >/dev/null || ai_fail "The tip commit is not in this repo."
 
 if [[ -n "${PUSH_TOKEN:-}" ]]; then
+  echo "::add-mask::$PUSH_TOKEN"
   auth="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
   echo "::add-mask::$auth"
   export GIT_CONFIG_COUNT=1
@@ -43,7 +44,8 @@ if [[ -n "${PUSH_TOKEN:-}" ]]; then
   export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
 fi
 
-remote_old="$(ai_git ls-remote "$remote" "refs/heads/$branch" | awk '{print $1}')"
+ls_out="$(ai_git ls-remote "$remote" "refs/heads/$branch")" || ai_fail "Could not read refs/heads/$branch from $remote."
+remote_old="$(printf '%s' "$ls_out" | awk '{print $1}')"
 if [[ "$remote_old" == "$tip" ]]; then
   echo "origin/$branch is already at $tip: nothing to push."
   ai_output pushed false
@@ -54,8 +56,10 @@ case "$mode" in
     [[ -n "$expected_old" && "$remote_old" == "$expected_old" ]] \
       || ai_fail "The PR branch $branch moved during this run (expected ${expected_old:-?}, found ${remote_old:-none}). Not pushing; re-run on the new head." ;;
   pipeline)
-    if [[ -n "$remote_old" && "$remote_old" != "$expected_old" ]]; then
-      ai_fail "origin/$branch exists or moved during this run (found $remote_old, expected ${expected_old:-no branch}). Not pushing."
+    # Starting fresh: the branch must not exist. Resuming: it must still be exactly
+    # where we started (not moved, not deleted).
+    if [[ "$remote_old" != "$expected_old" ]]; then
+      ai_fail "origin/$branch changed during this run (found ${remote_old:-no branch}, expected ${expected_old:-no branch}). Not pushing."
     fi ;;
 esac
 

@@ -27,7 +27,7 @@ g() { git -C "$1" "${@:2}"; }
 
 # world: fresh origin with one commit on main, a claude clone and a trusted clone
 world() {
-  W="$tmp/w$RANDOM"; mkdir -p "$W"
+  WN=$((${WN:-0} + 1)); W="$tmp/w$WN"; mkdir -p "$W"
   git init -q --bare -b main "$W/origin.git"
   git init -q -b main "$W/seed"; echo hello >"$W/seed/README.md"; g "$W/seed" add README.md; g "$W/seed" commit -qm init
   g "$W/seed" push -q "$W/origin.git" main
@@ -50,9 +50,10 @@ remote_sha() { g "$W/origin.git" rev-parse --verify --quiet "refs/heads/$1" || t
 # ---------------------------------------------------------------- lib.sh
 # shellcheck source=scripts/ai-push/lib.sh
 source "$S/lib.sh"
-for b in ai/12-x ai/12-fix-login ai/7-a1; do
-  if ai_validate_branch "$b" 12 || [[ "$b" != ai/12-* ]]; then ok; else bad "valid branch rejected: $b"; fi
+for b in ai/12-x ai/12-fix-login; do
+  if ai_validate_branch "$b" 12; then ok; else bad "valid branch rejected: $b"; fi
 done
+if ai_validate_branch ai/7-a1 7 && ai_validate_branch ai/7-a1; then ok; else bad "valid branch rejected: ai/7-a1"; fi
 for b in main master production refs/heads/main ai/12 ai/12-Foo "ai/12-foo bar" ai/abc-x +ai/12-x ai/12-x/../main ai/12-x/y ai/12-- "ai/12-x;rm" ai/12-$(printf 'a%.0s' $(seq 1 100)); do
   if ai_validate_branch "$b" 12; then bad "invalid branch accepted: $b"; else ok; fi
 done
@@ -87,6 +88,9 @@ g "$W/claude" remote set-url origin "https://x-access-token:TOKEN@github.com/o/r
 expect_fail "user info in the remote URL is detected" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
 if grep -q TOKEN "$tmp/last.out"; then bad "the token in the URL was printed"; else ok; fi
 g "$W/claude" remote set-url origin "$W/origin.git"
+g "$W/claude" config "url.https://x-access-token:T@github.com/.insteadOf" "https://github.com/"
+expect_fail "a url.*.insteadOf rewrite is detected" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+g "$W/claude" config --unset "url.https://x-access-token:T@github.com/.insteadOf"
 mkdir -p "$W/rt"; : >"$W/rt/git-credentials-abc.config"
 expect_fail "credentials file in RUNNER_TEMP is detected" env RUNNER_TEMP="$W/rt" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
 
@@ -118,7 +122,21 @@ out_has "re-run says nothing to push" "nothing to push"
 before="$(cat "$W/trusted/.git/config")"
 PUSH_TOKEN=FAKE_TOKEN_123 bash "$S/push-branch.sh" --repo "$W/trusted" --mode pipeline --branch ai/12-add-thing --tip "$TIP" >"$tmp/last.out" 2>&1 || true
 if grep -q FAKE_TOKEN_123 "$W/trusted/.git/config" || [[ "$(cat "$W/trusted/.git/config")" != "$before" ]]; then bad "the token changed .git/config"; else ok; fi
-if grep -q FAKE_TOKEN_123 "$tmp/last.out"; then bad "the raw token was printed"; else ok; fi
+if grep -v '^::add-mask::' "$tmp/last.out" | grep -q FAKE_TOKEN_123; then bad "the raw token was printed outside ::add-mask::"; else ok; fi
+grep -qx '::add-mask::FAKE_TOKEN_123' "$tmp/last.out" && ok || bad "the raw token is masked"
+# the token reaches git as an extraheader via env: record what git sees on push
+mkdir -p "$W/wrap"; real_git="$(command -v git)"
+cat >"$W/wrap/git" <<WRAP
+#!/usr/bin/env bash
+for a in "\$@"; do [[ "\$a" == push ]] && printf '%s|%s|%s\n' "\${GIT_CONFIG_COUNT:-}" "\${GIT_CONFIG_KEY_0:-}" "\${GIT_CONFIG_VALUE_0:-}" >>"$W/wrap.log"; done
+exec "$real_git" "\$@"
+WRAP
+chmod +x "$W/wrap/git"
+rm -f "$W/claude/.ai-pr-body.md"; claude_commit ai/12-add-thing src/c.txt; bundle --mode pipeline --issue 12 >/dev/null
+expect_ok "inspect the second round" inspect --mode pipeline --number 12; TIP2="$(outv tip)"
+PATH="$W/wrap:$PATH" PUSH_TOKEN=FAKE_TOKEN_123 bash "$S/push-branch.sh" --repo "$W/trusted" --mode pipeline --branch ai/12-add-thing --tip "$TIP2" --expected-old "$TIP" >"$tmp/last.out" 2>&1 || true
+expected_hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' FAKE_TOKEN_123 | base64 | tr -d '\n')"
+if grep -qxF "1|http.https://github.com/.extraheader|$expected_hdr" "$W/wrap.log" 2>/dev/null; then ok; else bad "push did not get the token as a github.com extraheader via GIT_CONFIG_*"; fi
 
 # ---------------------------------------------------------------- nothing to push
 world
@@ -237,6 +255,54 @@ trusted; expect_ok "inspect (none) reports the count" inspect --mode none --numb
 world; trusted
 expect_fail "push to main is refused" push --mode pipeline --branch main --tip "$BASE"
 expect_fail "push to a non-ai branch is refused" push --mode pipeline --branch feature/x --tip "$BASE"
+
+# ---------------------------------------------------------------- review fixes
+# renames: moving a guarded file out still counts (old path is reported)
+world; g "$W/claude" checkout -q -b ai/12-mv
+mkdir -p "$W/claude/.github/workflows" "$W/claude/apps/api/payment"
+echo w >"$W/claude/.github/workflows/ci.yml"; echo p >"$W/claude/apps/api/payment/pay.ts"
+g "$W/claude" add -A; g "$W/claude" commit -qm add; g "$W/claude" push -q origin ai/12-mv
+BASE="$(g "$W/claude" rev-parse HEAD)"
+g "$W/claude" mv .github/workflows/ci.yml docs-ci.yml; g "$W/claude" mv apps/api/payment/pay.ts apps/api/pay.ts; g "$W/claude" commit -qm move
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect a rename out of guarded paths" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv workflows)" -ge 1 && "$(outv high_risk)" == true ]] && ok || bad "renames out of guarded paths are still reported (workflows=$(outv workflows) high_risk=$(outv high_risk))"
+# non-ASCII path under .github/workflows is not C-quoted away
+world; claude_commit ai/12-u ".github/workflows/ทดสอบ.yml"
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect a non-ASCII workflow path" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv workflows)" == 1 && "$(outv high_risk)" == true ]] && ok || bad "non-ASCII workflow path is counted"
+# labeler given but missing / empty -> fail closed
+expect_fail "missing labeler file fails" inspect --mode pipeline --number 12 --labeler "$W/nope.yml"
+printf 'other:\n  - x\n' >"$W/empty-labeler.yml"
+expect_fail "labeler without risk:high globs fails" inspect --mode pipeline --number 12 --labeler "$W/empty-labeler.yml"
+# mode none must not accept a bundle
+expect_fail "mode none with status=bundle fails" inspect --mode none --number 5
+# half-written artifacts
+echo empty >"$OUT/status"; echo 3 >"$OUT/commits"
+expect_fail "status empty with commits > 0 fails" inspect --mode pipeline --number 12
+echo failed >"$OUT/status"
+expect_fail "status failed fails" inspect --mode pipeline --number 12
+# pr mode needs the expected branch
+bundle --mode pipeline --issue 12 >/dev/null
+expect_fail "pr mode without --expected-branch fails" inspect --mode pr --number 5
+# resume: the branch was deleted during the run
+world; claude_commit ai/12-x f1; g "$W/claude" push -q origin ai/12-x
+RBASE="$(remote_sha ai/12-x)"; BASE="$RBASE"; claude_commit ai/12-x f2
+bundle --mode pipeline --issue 12 >/dev/null; trusted; inspect --mode pipeline --number 12 >/dev/null; TIP="$(outv tip)"
+g "$W/origin.git" update-ref -d refs/heads/ai/12-x
+expect_fail "resume: a branch deleted during the run is not recreated" push --mode pipeline --branch ai/12-x --tip "$TIP" --expected-old "$RBASE"
+[[ -z "$(remote_sha ai/12-x)" ]] && ok || bad "deleted branch stayed deleted"
+# a base that is not in the repo is refused (not a crash)
+world; claude_commit ai/12-x f1
+expect_ok "make-bundle with an unknown base" bash "$S/make-bundle.sh" --repo "$W/claude" --out "$OUT" --base "$(printf 'f%.0s' $(seq 1 40))" --mode pipeline --issue 12
+[[ "$(cat "$OUT/status")" == refused ]] && ok || bad "unknown base gives status refused"
+# a crash inside make-bundle (here: the bundle file cannot be written) leaves status=failed
+rm -rf "$OUT"; mkdir -p "$OUT/ai.bundle"
+expect_fail "make-bundle that cannot write the bundle" bundle --mode pipeline --issue 12
+[[ "$(cat "$OUT/status")" == failed ]] && ok || bad "a crash leaves status failed ($(cat "$OUT/status"))"
+rmdir "$OUT/ai.bundle"; trusted
+expect_fail "inspect stops on status failed" inspect --mode pipeline --number 12
 
 # ---------------------------------------------------------------- static: pushes never force or widen
 push_lines="$(grep -hE '(^|[[:space:]])(ai_git|git)[[:space:]](.*[[:space:]])?push([[:space:]]|$)' "$S"/*.sh | grep -vE '^[[:space:]]*#' || true)"
