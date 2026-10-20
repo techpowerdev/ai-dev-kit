@@ -1,7 +1,9 @@
-# AI Dev Kit — ติดตั้งใน 30 นาที
+# AI Dev Kit — ติดตั้งใน 30–60 นาที
 
 ชุดนี้ทำให้ repo มีทีม AI agent ทำงานตั้งแต่ issue → spec → code → review → QA → deploy
 โดยคนอนุมัติ 4 จุด (ดูภาพรวมที่ `docs/ai-workflow.md`)
+
+> 👉 **ติดตั้งครั้งแรก:** ทำตาม [docs/getting-started.md](docs/getting-started.md) คู่มือทีละขั้นพร้อมคำสั่งตรวจและตารางแก้ปัญหา หน้านี้เป็นข้อมูลอ้างอิง
 
 ## สิ่งที่ต้องมี
 - Repo บน GitHub (คุณเป็น admin) · `gh` CLI · `jq`
@@ -14,7 +16,7 @@
 
 **1. คัดลอกไฟล์เข้า repo**
 ```bash
-rsync -a --prune-empty-dirs \
+rsync -a --ignore-existing --prune-empty-dirs \
   --exclude .git --exclude node_modules \
   --exclude package.json --exclude pnpm-lock.yaml --exclude tests/kit \
   ai-dev-kit/ /path/to/your-repo/
@@ -22,7 +24,7 @@ cd /path/to/your-repo
 chmod +x scripts/*.sh .claude/hooks/guard.sh
 ```
 - **อย่า copy `package.json`, `pnpm-lock.yaml` และ `tests/kit/`** ไฟล์เหล่านี้มีไว้ให้ kit ทดสอบตัวเองเท่านั้น ถ้า copy ไปจะทับไฟล์ของโปรเจกต์
-- ถ้ามี `.github/` หรือ `CLAUDE.md` อยู่แล้ว ให้ merge ด้วยมือ
+- `--ignore-existing` ไม่ทับไฟล์ที่โปรเจกต์มีอยู่แล้ว เช่น `CLAUDE.md`, `.gitignore` หรือไฟล์ใน `.github/` ไฟล์เหล่านั้นต้อง merge ด้วยมือ ดูวิธีหาว่าไฟล์ไหนชนใน [getting-started ขั้นที่ 1](docs/getting-started.md)
 
 **2. แก้ให้ตรงโปรเจกต์** — ค้นคำว่า `TODO`
 ```bash
@@ -56,11 +58,13 @@ grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts doc
 | อายุ | จนกว่าจะลบ | 1 ปี แล้วต้องสร้างใหม่ |
 | เหมาะกับ | repo ของทีม / secret ระดับ org | repo ส่วนตัวที่ดูแลคนเดียว |
 
+**วิธีที่แนะนำสำหรับ subscription:** พิมพ์ `/install-github-app` ใน Claude Code ถ้าเจอ "Existing Workflow Found" ให้เลือก **"Skip workflow update (configure secrets only)"** ระบบจะตั้ง `CLAUDE_CODE_OAUTH_TOKEN` ให้เอง ไม่ต้อง copy token (ดู [getting-started ขั้นที่ 2](docs/getting-started.md))
+
 ```bash
 gh secret set ANTHROPIC_API_KEY          # หรือ
 gh secret set CLAUDE_CODE_OAUTH_TOKEN
 ```
-ตั้ง `CLAUDE_CODE_OAUTH_TOKEN` ทีละขั้น:
+ตั้ง `CLAUDE_CODE_OAUTH_TOKEN` เองทีละขั้น (ระวัง: token ยาวจนขึ้นบรรทัดใหม่ใน terminal copy แล้วมักได้ไม่ครบ):
 ```bash
 claude setup-token                                        # เปิด browser ให้ login claude.ai แล้วแสดง token ใน terminal
 gh secret set CLAUDE_CODE_OAUTH_TOKEN -R <owner>/<repo>   # วาง token แล้วกด Enter (ตัวอักษรไม่ขึ้นจอ เป็นปกติ)
@@ -121,7 +125,7 @@ claude
 ## ข้อควรรู้
 - **ทำคนเดียว:** ใช้ `setup-github.sh ... --solo` (ขั้นตอนที่ 5) GitHub ไม่ให้อนุมัติ PR ของตัวเอง โหมดนี้จึงไม่บังคับ approve แต่ยังบังคับ PR และบังคับ CI เขียวเมื่อ main มี `package.json` แล้ว
 - **หลังเปิด branch protection:** วิธี merge PR, การกด "Update branch" และ PR ของ dependabot ดูที่ [docs/ai-workflow.md](docs/ai-workflow.md) หัวข้อ "Merge PR หลังเปิด branch protection"
-- **ค่าใช้จ่าย:** ทุก workflow ใช้ Claude (ค่า API หรือโควต้า subscription แล้วแต่ credential ที่ตั้ง) + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer ใช้ได้กับ public repo หรือ private repo บน GitHub Pro/Team/Enterprise ถ้าไม่มี report จะรันทันทีหลัง deploy)
+- **ค่าใช้จ่าย:** ทุก workflow ใช้ Claude (ค่า API หรือโควต้า subscription แล้วแต่ credential ที่ตั้ง) + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer และ required reviewers ใช้ได้กับ repo public หรือแพลน Enterprise เท่านั้น บน repo private ของแพลน Free/Pro/Team ทั้ง Gate 4 และการรอ 30 นาทีจะไม่มีผล ดู [getting-started ขั้นที่ 0](docs/getting-started.md))
 - **Model:** ปรับใน frontmatter ของแต่ละ agent (`model: sonnet|opus|haiku|inherit`)
 - **ปรับปรุงต่อเนื่อง:** AI ผิดซ้ำเรื่องไหน → เพิ่มกฎใน `CLAUDE.md` หรือไฟล์ agent นั้น
 
@@ -148,6 +152,7 @@ README-AI-SETUP.md                ไฟล์นี้
     audit.yml                     pnpm audit: PR ที่แตะ dependency + ทุกสัปดาห์ (ไม่ใช่ required check)
     deploy.yml                    staging → 👤 approve → production → AI report
 docs/
+  getting-started.md              คู่มือติดตั้งทีละขั้น ตั้งแต่ศูนย์จนพัฒนา feature แรก
   ai-workflow.md                  คู่มือการทำงาน + gates
   specs/ plans/ adr/ releases/    templates
 scripts/
