@@ -45,7 +45,12 @@ for f in .claude/commands/*.md; do
     expect "$f tells Claude to run shell commands one at a time" grep -q 'Run each shell command on its own' "$f"
   fi
 done
-expect "claude-review.yml fails when no review was posted" grep -q 'title=AI review not posted' .github/workflows/claude-review.yml
+expect "claude-review.yml checks that the review was posted" grep -q 'check-review-posted.sh' .github/workflows/claude-review.yml
+# shellcheck disable=SC2016  # backticks here are literal Markdown, not command substitution
+expect "/review tells Claude to start the comment with the marker the check looks for" grep -q 'start with the line `## AI Review`' .claude/commands/review.md
+# shellcheck disable=SC2016  # backticks here are literal Markdown, not command substitution
+compound="$(grep -rnE '`[^`]*(&&|\|\|)[^`]*`' .claude/commands .claude/agents | grep -v 'without `;`, `&&`' || true)"
+expect "no command or agent tells Claude to run a compound shell command: $compound" none "$compound"
 while read -r c; do
   expect "a workflow runs missing command '/$c'" test -f ".claude/commands/$c.md"
 done < <(grep -rhoE --include='*.yml' 'prompt: "/[a-z-]+' .github/workflows | sed 's|.*/||' | sort -u)
@@ -127,9 +132,13 @@ expect "all $claude_steps Claude steps pass CLAUDE_CODE_OAUTH_TOKEN (found $oaut
 # Every Claude step has id "claude" and is followed by the step that prints why it failed.
 ids="$(grep -rhcE --include='*.yml' '^ +id: claude$' .github/workflows | awk '{s+=$1} END {print s}')"
 # shellcheck disable=SC2016  # literal "$EXEC_FILE" as written in the workflows
-shows="$(grep -rc --include='*.yml' 'scripts/show-claude-error.sh "$EXEC_FILE"' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+shows="$(grep -rc --include='*.yml' '"$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE"' .github/workflows | awk -F: '{s+=$2} END {print s}')"
 expect "all $claude_steps Claude steps have id: claude (found $ids)" test "$ids" -eq "$claude_steps"
 expect "all $claude_steps Claude steps are followed by show-claude-error.sh (found $shows)" test "$shows" -eq "$claude_steps"
+snaps="$(grep -rc --include='*.yml' 'name: Snapshot CI helpers' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+expect "all $claude_steps Claude steps snapshot the CI helpers first (found $snaps)" test "$snaps" -eq "$claude_steps"
+direct="$(grep -rn --include='*.yml' 'bash scripts/\(show-claude-error\|check-review-posted\)' .github/workflows || true)"
+expect "helpers run from the snapshot, not the working tree: $direct" none "$direct"
 # The skip gates must accept either credential, or a token-only repo would skip every AI job.
 while IFS= read -r gate; do
   expect "HAS_CLAUDE_AUTH checks both credentials: $gate" grep -qE 'ANTHROPIC_API_KEY.*CLAUDE_CODE_OAUTH_TOKEN' <<<"$gate"

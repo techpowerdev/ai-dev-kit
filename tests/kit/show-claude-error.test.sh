@@ -47,8 +47,10 @@ cat >"$tmp/long.json" <<'J'
  {"type":"result","subtype":"error_max_turns","is_error":true}]
 J
 out="$(run "$tmp/long.json")"
-has   "long: last reply shown"         "$out" "Reached max turns"
+has   "long: subtype shown"            "$out" "::error title=Claude failed::subtype: error_max_turns"
+lacks "long: last reply hidden"        "$out" "Reached max turns"
 lacks "long: earlier reply hidden"     "$out" "EARLIER REVIEW TEXT"
+lacks "long: no misleading hint"       "$out" "Likely fix"
 
 # 5. Missing and broken files never fail the step
 out="$(run "$tmp/missing.json")"; has "missing: explains" "$out" "No execution file"
@@ -68,6 +70,29 @@ has   "denied: bash command shown"     "$out" "::warning title=Claude was denied
 has   "denied: file tool shown"        "$out" "Read: /etc/hosts"
 lacks "denied: no review text"         "$out" "PRIVATE REVIEW TEXT"
 lacks "denied: not reported as error"  "$out" "::error"
+
+# 7. CR/LF in Claude-controlled text cannot start a new workflow command; % is escaped
+printf '%s\n' '[{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom\r::stop-commands::x\n::notice::fake 100%"}]' >"$tmp/inject.json"
+out="$(run "$tmp/inject.json")"
+if grep -qE '(^|\r)::(stop-commands|notice)::' <<<"$out"; then fail=$((fail+1)); echo "   ✗ inject: a new workflow command was started"; else pass=$((pass+1)); fi
+has   "inject: flattened into one line" "$out" "boom ::stop-commands::x ::notice::fake 100%25"
+
+# 8. errors[] array, null tool_input, credit hint
+cat >"$tmp/credit.json" <<'J'
+[{"type":"result","subtype":"error_during_execution","is_error":true,
+  "errors":["Your credit balance is too low to access the Anthropic API."],
+  "permission_denials":[{"tool_name":"Bash","tool_use_id":"t1","tool_input":null}]}]
+J
+out="$(run "$tmp/credit.json")"
+has   "credit: errors[] shown"         "$out" "credit balance is too low"
+has   "credit: credit hint"            "$out" "out of credit"
+has   "credit: null input handled"     "$out" "denied a tool::Bash: {}"
+
+# 9. Words like "token" or "login" in an unrelated error give no credential hint
+printf '%s\n' '[{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Prompt is too long: 250000 tokens > 200000 maximum; see the login docs"}]' >"$tmp/toolong.json"
+out="$(run "$tmp/toolong.json")"
+has   "toolong: error shown"           "$out" "Prompt is too long"
+lacks "toolong: no credential hint"    "$out" "credential was rejected"
 
 echo "   show-claude-error: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
