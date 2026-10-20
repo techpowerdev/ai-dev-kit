@@ -40,6 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+        id: claude
         with:
           # Either secret works: a Console API key (billed per token) or a Claude
           # subscription token from `claude setup-token` (Pro/Max/Team/Enterprise).
@@ -50,6 +51,12 @@ jobs:
           claude_args: >-
             --max-turns 25
             --allowedTools "${{ env.CLAUDE_TOOLS }}"
+      - name: Show why Claude failed
+        # claude-code-action hides Claude's output; this prints only the error message.
+        if: failure() && steps.claude.outcome == 'failure'
+        env:
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+        run: bash scripts/show-claude-error.sh "$EXEC_FILE"
 
   plan-and-build:
     if: github.event.label.name == 'approved:spec' && github.event.sender.type != 'Bot'
@@ -75,6 +82,7 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+        id: claude
         with:
           # Either secret works: a Console API key (billed per token) or a Claude
           # subscription token from `claude setup-token` (Pro/Max/Team/Enterprise).
@@ -85,6 +93,12 @@ jobs:
           claude_args: >-
             --max-turns 80
             --allowedTools "${{ env.CLAUDE_TOOLS }}"
+      - name: Show why Claude failed
+        # claude-code-action hides Claude's output; this prints only the error message.
+        if: failure() && steps.claude.outcome == 'failure'
+        env:
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+        run: bash scripts/show-claude-error.sh "$EXEC_FILE"
 
   build-high-risk:
     if: github.event.label.name == 'approved:plan' && github.event.sender.type != 'Bot'
@@ -110,6 +124,7 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+        id: claude
         with:
           # Either secret works: a Console API key (billed per token) or a Claude
           # subscription token from `claude setup-token` (Pro/Max/Team/Enterprise).
@@ -120,3 +135,9 @@ jobs:
           claude_args: >-
             --max-turns 80
             --allowedTools "${{ env.CLAUDE_TOOLS }}"
+      - name: Show why Claude failed
+        # claude-code-action hides Claude's output; this prints only the error message.
+        if: failure() && steps.claude.outcome == 'failure'
+        env:
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+        run: bash scripts/show-claude-error.sh "$EXEC_FILE"

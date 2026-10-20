@@ -121,6 +121,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - if: env.HAS_CLAUDE_AUTH == 'true'
+        id: claude
         uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}   # TODO: read-only token for your monitoring
@@ -138,3 +139,9 @@ jobs:
           claude_args: >-
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Task,Agent,WebFetch,Bash(git log:*),Bash(gh pr list:*),Bash(gh issue create:*),Bash(curl -s:*)"
+      - name: Show why Claude failed
+        # claude-code-action hides Claude's output; this prints only the error message.
+        if: failure() && steps.claude.outcome == 'failure'
+        env:
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+        run: bash scripts/show-claude-error.sh "$EXEC_FILE"

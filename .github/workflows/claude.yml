@@ -34,6 +34,7 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+        id: claude
         with:
           # Either secret works: a Console API key (billed per token) or a Claude
           # subscription token from `claude setup-token` (Pro/Max/Team/Enterprise).
@@ -43,3 +44,9 @@ jobs:
           claude_args: >-
             --max-turns 40
             --allowedTools "Read,Write,Edit,Glob,Grep,Task,Agent,Bash(git add:*),Bash(git commit:*),Bash(git push origin ai/*),Bash(git diff:*),Bash(git log:*),Bash(git status:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(pnpm lint:*),Bash(pnpm typecheck:*),Bash(pnpm test:*),Bash(pnpm build:*)"
+      - name: Show why Claude failed
+        # claude-code-action hides Claude's output; this prints only the error message.
+        if: failure() && steps.claude.outcome == 'failure'
+        env:
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+        run: bash scripts/show-claude-error.sh "$EXEC_FILE"

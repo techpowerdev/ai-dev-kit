@@ -27,12 +27,12 @@ done < <(grep -rhoE '\*\*[a-z-]+\*\*' .claude/commands | tr -d '*' | grep -vxE '
 # Agents named in workflow prompts ("Use the X agent") exist.
 while read -r a; do
   expect "a workflow uses missing agent '$a'" test -f ".claude/agents/$a.md"
-done < <(grep -rhoE '[Uu]se the [a-z-]+ agent' .github/workflows | awk '{print $3}' | sort -u)
+done < <(grep -rhoE --include='*.yml' '[Uu]se the [a-z-]+ agent' .github/workflows | awk '{print $3}' | sort -u)
 
 # --- Slash commands --------------------------------------------------------------
 while read -r c; do
   expect "a workflow runs missing command '/$c'" test -f ".claude/commands/$c.md"
-done < <(grep -rhoE 'prompt: "/[a-z-]+' .github/workflows | sed 's|.*/||' | sort -u)
+done < <(grep -rhoE --include='*.yml' 'prompt: "/[a-z-]+' .github/workflows | sed 's|.*/||' | sort -u)
 
 # --- Labels ------------------------------------------------------------------------
 # Every label the workflow depends on is created by setup-github.sh.
@@ -61,9 +61,9 @@ while read -r wf; do
 done < <(sed -nE 's|^ *uses: \./(\.github/workflows/[^ ]+)$|\1|p' .github/workflows/ci.yml)
 
 # --- Guardrails ---------------------------------------------------------------------
-unpinned="$(grep -rnE 'uses: [^. ][^@ ]*@' .github/workflows | grep -vE '@[0-9a-f]{40}( |$)' || true)"
+unpinned="$(grep -rnE --include='*.yml' 'uses: [^. ][^@ ]*@' .github/workflows | grep -vE '@[0-9a-f]{40}( |$)' || true)"
 expect "every third-party action is pinned to a commit SHA: $unpinned" none "$unpinned"
-dangerous="$(grep -rhE 'allowedTools' .github/workflows | grep -oE 'pr merge|release create|push --force|push -f' || true)"
+dangerous="$(grep -rhE --include='*.yml' 'allowedTools' .github/workflows | grep -oE 'pr merge|release create|push --force|push -f' || true)"
 expect "no workflow lets Claude merge, release, or force-push: $dangerous" none "$dangerous"
 for job in spec plan-and-build build-high-risk; do
   block="$(sed -n "/^  $job:/,/^  [a-z]/p" .github/workflows/ai-pipeline.yml)"
@@ -96,21 +96,28 @@ expect "production smoke test is skipped when not configured" \
 for jw in "claude-review.yml review" "preview.yml ai-qa" "deploy.yml post-deploy-report"; do
   read -r wf job <<<"$jw"
   block="$(job_block "$wf" "$job")"
-  gated="$(grep -B1 'anthropics/claude-code-action' <<<"$block" | head -1)"
+  # the step's own lines, from its "- " line down to the uses: line
+  gated="$(awk '/^      - /{step=""} {step=step $0 "\n"} /anthropics\/claude-code-action@/{printf "%s", step; exit}' <<<"$block")"
   expect "$wf job '$job' runs Claude only when a Claude credential is set" grep -qF "env.HAS_CLAUDE_AUTH == 'true'" <<<"$gated"
 done
 # Every Claude step accepts either credential, so a repo can use an API key or a subscription token.
-claude_steps="$(grep -rc 'anthropics/claude-code-action@' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+claude_steps="$(grep -rc --include='*.yml' 'anthropics/claude-code-action@' .github/workflows | awk -F: '{s+=$2} END {print s}')"
 # shellcheck disable=SC2016  # the ${{ }} below are literal GitHub expressions to match, not shell
-api_inputs="$(grep -rc 'anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+api_inputs="$(grep -rc --include='*.yml' 'anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}' .github/workflows | awk -F: '{s+=$2} END {print s}')"
 # shellcheck disable=SC2016  # the ${{ }} below are literal GitHub expressions to match, not shell
-oauth_inputs="$(grep -rc 'claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+oauth_inputs="$(grep -rc --include='*.yml' 'claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}' .github/workflows | awk -F: '{s+=$2} END {print s}')"
 expect "all $claude_steps Claude steps pass ANTHROPIC_API_KEY (found $api_inputs)" test "$api_inputs" -eq "$claude_steps"
 expect "all $claude_steps Claude steps pass CLAUDE_CODE_OAUTH_TOKEN (found $oauth_inputs)" test "$oauth_inputs" -eq "$claude_steps"
+# Every Claude step has id "claude" and is followed by the step that prints why it failed.
+ids="$(grep -rhcE --include='*.yml' '^ +id: claude$' .github/workflows | awk '{s+=$1} END {print s}')"
+# shellcheck disable=SC2016  # literal "$EXEC_FILE" as written in the workflows
+shows="$(grep -rc --include='*.yml' 'scripts/show-claude-error.sh "$EXEC_FILE"' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+expect "all $claude_steps Claude steps have id: claude (found $ids)" test "$ids" -eq "$claude_steps"
+expect "all $claude_steps Claude steps are followed by show-claude-error.sh (found $shows)" test "$shows" -eq "$claude_steps"
 # The skip gates must accept either credential, or a token-only repo would skip every AI job.
 while IFS= read -r gate; do
   expect "HAS_CLAUDE_AUTH checks both credentials: $gate" grep -qE 'ANTHROPIC_API_KEY.*CLAUDE_CODE_OAUTH_TOKEN' <<<"$gate"
-done < <(grep -rh 'HAS_CLAUDE_AUTH:' .github/workflows)
+done < <(grep -rh --include='*.yml' 'HAS_CLAUDE_AUTH:' .github/workflows)
 
 echo "   consistency: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

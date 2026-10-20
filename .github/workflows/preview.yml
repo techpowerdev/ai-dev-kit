@@ -55,6 +55,7 @@ jobs:
       - if: env.HAS_CLAUDE_AUTH == 'true'
         run: pnpm exec playwright install --with-deps chromium
       - if: env.HAS_CLAUDE_AUTH == 'true'
+        id: claude
         uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         env:
           BASE_URL: ${{ needs.deploy-preview.outputs.url }}
@@ -68,3 +69,9 @@ jobs:
           claude_args: >-
             --max-turns 40
             --allowedTools "Read,Write,Glob,Grep,Task,Agent,Bash(pnpm test:e2e:*),Bash(pnpm exec playwright:*),Bash(gh pr view:*),Bash(gh pr comment:*)"
+      - name: Show why Claude failed
+        # claude-code-action hides Claude's output; this prints only the error message.
+        if: failure() && steps.claude.outcome == 'failure'
+        env:
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+        run: bash scripts/show-claude-error.sh "$EXEC_FILE"
