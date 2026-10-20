@@ -35,7 +35,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         with:
+          # Either secret works: a Console API key (billed per token) or a Claude
+          # subscription token from `claude setup-token` (Pro/Max/Team/Enterprise).
+          # Set only one: if both are set, the API key wins and is billed.
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: >-
             --max-turns 40
             --allowedTools "Read,Write,Edit,Glob,Grep,Task,Agent,Bash(git add:*),Bash(git commit:*),Bash(git push origin ai/*),Bash(git diff:*),Bash(git log:*),Bash(git status:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(pnpm lint:*),Bash(pnpm typecheck:*),Bash(pnpm test:*),Bash(pnpm build:*)"

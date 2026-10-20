@@ -6,7 +6,7 @@
 ## สิ่งที่ต้องมี
 - Repo บน GitHub (คุณเป็น admin) · `gh` CLI · `jq`
 - Claude Code ในเครื่อง (สำหรับใช้ agent/slash command ตอนทำงานเอง)
-- Anthropic API key (หรือ Claude subscription token สำหรับ GitHub Action)
+- Claude credential สำหรับ GitHub Action อย่างใดอย่างหนึ่ง (ดูขั้นตอนที่ 4)
 
 ## ขั้นตอน
 
@@ -41,8 +41,28 @@ grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts doc
 หรือเปิด Claude Code ใน repo แล้วพิมพ์ `/install-github-app`
 
 **4. ตั้ง secrets**
+
+เลือก Claude credential **อย่างใดอย่างหนึ่ง** (job AI จะข้ามพร้อม warning จนกว่าจะตั้ง):
+
+| | `ANTHROPIC_API_KEY` | `CLAUDE_CODE_OAUTH_TOKEN` |
+|---|---|---|
+| เอามาจาก | console.anthropic.com → API Keys | `claude setup-token` ในเครื่อง |
+| คิดเงิน | ตาม token ที่ใช้ แยกจาก subscription | หักจาก usage limit ของ subscription |
+| แพลนที่ใช้ได้ | ทุกบัญชี Console | Pro, Max, Team, Enterprise |
+| อายุ | จนกว่าจะลบ | 1 ปี แล้วต้องสร้างใหม่ |
+| เหมาะกับ | repo ของทีม / secret ระดับ org | repo ส่วนตัวที่ดูแลคนเดียว |
+
 ```bash
-gh secret set ANTHROPIC_API_KEY
+gh secret set ANTHROPIC_API_KEY          # หรือ
+gh secret set CLAUDE_CODE_OAUTH_TOKEN
+```
+- **อย่าตั้งทั้งสองตัว** ถ้ามีทั้งคู่ Claude จะใช้ API key และคิดเงินแบบ API โดยไม่เตือน
+- **token จาก subscription ผูกกับบัญชีคนที่สร้าง** และใช้โควต้าร่วมกับ Claude Code ในเครื่อง เอกสารของ Anthropic แนะนำให้ใช้ API key สำหรับ secret ที่ใช้ร่วมกันทั้งองค์กร
+- **การลบ secret ไม่ได้ยกเลิก credential** ต้องลบ key ใน Console หรือรอ token หมดอายุ
+- ที่มา: [GitHub Actions](https://code.claude.com/docs/en/github-actions), [Authentication](https://code.claude.com/docs/en/authentication), [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)
+
+secrets อื่นๆ:
+```bash
 gh secret set PREVIEW_DEPLOY_TOKEN    --env preview
 gh secret set STAGING_DEPLOY_TOKEN    --env staging
 gh secret set PRODUCTION_DEPLOY_TOKEN --env production
@@ -80,7 +100,7 @@ claude
 
 ## ข้อควรรู้
 - **ทำคนเดียว:** GitHub ไม่ให้อนุมัติ PR ของตัวเอง — PR ที่ AI เปิด (ผ่าน Claude app) คุณอนุมัติได้ แต่ PR ที่คุณเปิดเองให้ใช้ทีมช่วย review หรือปรับ branch protection
-- **ค่าใช้จ่าย:** ทุก workflow ใช้ API token + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer ใช้ได้กับ public repo หรือ private repo บน GitHub Pro/Team/Enterprise ถ้าไม่มี report จะรันทันทีหลัง deploy)
+- **ค่าใช้จ่าย:** ทุก workflow ใช้ Claude (ค่า API หรือโควต้า subscription แล้วแต่ credential ที่ตั้ง) + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer ใช้ได้กับ public repo หรือ private repo บน GitHub Pro/Team/Enterprise ถ้าไม่มี report จะรันทันทีหลัง deploy)
 - **Model:** ปรับใน frontmatter ของแต่ละ agent (`model: sonnet|opus|haiku|inherit`)
 - **ปรับปรุงต่อเนื่อง:** AI ผิดซ้ำเรื่องไหน → เพิ่มกฎใน `CLAUDE.md` หรือไฟล์ agent นั้น
 
@@ -126,6 +146,6 @@ pnpm test        # guard hook, setup-github.sh (กับ gh ปลอม) แ�
 `tests/kit/consistency.test.sh` เช็คว่าชิ้นส่วนของ flow ยังอ้างถึงกันถูก เช่น agent ที่ command เรียกมีอยู่จริง, label ที่ workflow ใช้ถูกสร้างใน setup script, ชื่อ required check ตรงกับ job ใน CI, action ถูก pin ด้วย SHA และไม่มี workflow ไหนให้ Claude merge เองได้ เมื่อแก้ hook ให้เพิ่มเคสใน `tests/kit/guard.test.sh` ทั้งเคสที่ต้องบล็อกและเคสใกล้เคียงที่ต้องผ่าน
 
 ในการรันบน GitHub ของ kit:
-- **AI review, AI QA, post-deploy report** ข้ามพร้อม warning ถ้ายังไม่ได้ตั้ง `ANTHROPIC_API_KEY` ตั้ง key เมื่ออยากทดสอบ flow AI จริง (เสียค่า API ทุก PR)
+- **AI review, AI QA, post-deploy report** ข้ามพร้อม warning ถ้ายังไม่ได้ตั้ง `ANTHROPIC_API_KEY` หรือ `CLAUDE_CODE_OAUTH_TOKEN` ตั้งเมื่ออยากทดสอบ flow AI จริง (ใช้ Claude ทุก PR)
 - **preview, smoke test, production** ข้ามเพราะ `deploy.sh` เป็น placeholder (ส่ง `configured=false`)
 - **e2e** ข้ามพร้อม warning เพราะไม่มี script `test:e2e`
