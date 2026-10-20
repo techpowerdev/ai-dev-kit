@@ -1,0 +1,18 @@
+# Auto-labels PRs by changed paths. risk:high + CODEOWNERS = owner must review line by line.
+name: Risk label
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v5
+        with:
+          sync-labels: true

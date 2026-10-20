@@ -1,0 +1,110 @@
+# Label-driven AI pipeline with human gates.
+#
+#   issue opened from template  → label ai:spec        → AI writes spec           → 👤 Gate 1
+#   human adds  approved:spec   →                       → AI plans (+ builds if low/medium risk) → PR
+#   human adds  approved:plan   (only for risk:high)    → AI builds → PR
+#
+# Only humans can trigger the next step: label events from bots are ignored,
+# and only people with write access can add labels.
+
+name: AI pipeline
+
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: ai-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+  actions: read
+
+env:
+  CLAUDE_TOOLS: >-
+    Read,Write,Edit,Glob,Grep,Task,Agent,
+    Bash(gh issue:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh label:*),
+    Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin ai/*),Bash(git push -u origin ai/*),
+    Bash(git diff:*),Bash(git log:*),Bash(git status:*),
+    Bash(pnpm install:*),Bash(pnpm lint:*),Bash(pnpm typecheck:*),Bash(pnpm test:*),Bash(pnpm build:*)
+
+jobs:
+  spec:
+    if: github.event.label.name == 'ai:spec' && github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/spec ${{ github.event.issue.number }}"
+          claude_args: >-
+            --max-turns 25
+            --allowedTools "${{ env.CLAUDE_TOOLS }}"
+
+  plan-and-build:
+    if: github.event.label.name == 'approved:spec' && github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres, POSTGRES_DB: medusa_test }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/medusa_test
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/plan ${{ github.event.issue.number }}"
+          claude_args: >-
+            --max-turns 80
+            --allowedTools "${{ env.CLAUDE_TOOLS }}"
+
+  build-high-risk:
+    if: github.event.label.name == 'approved:plan' && github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres, POSTGRES_DB: medusa_test }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/medusa_test
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/implement ${{ github.event.issue.number }}"
+          claude_args: >-
+            --max-turns 80
+            --allowedTools "${{ env.CLAUDE_TOOLS }}"

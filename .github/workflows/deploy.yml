@@ -1,0 +1,120 @@
+# main → staging (auto) → smoke test → 👤 Gate 4: human approves "production" environment
+# → production → AI post-deploy health report.
+# Rollback: Actions → Deploy → Run workflow → target=production, ref=<previous tag or sha>.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "staging or production"
+        required: true
+        default: production
+        type: choice
+        options: [staging, production]
+      ref:
+        description: "Git ref to deploy (tag/sha) — use for rollback"
+        required: false
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  deployments: write
+  id-token: write
+  issues: write
+  pull-requests: read
+  actions: read
+
+jobs:
+  staging:
+    if: github.event_name == 'push' || inputs.target == 'staging'
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref || github.sha }}" }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - id: deploy
+        run: ./scripts/deploy.sh staging "${{ inputs.ref || github.sha }}"
+        env:
+          DEPLOY_TOKEN: ${{ secrets.STAGING_DEPLOY_TOKEN }}
+
+  smoke-staging:
+    needs: staging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e --grep @smoke
+        env:
+          BASE_URL: ${{ needs.staging.outputs.url }}
+
+  production:
+    # Push path: waits for staging smoke. Manual path (rollback): goes straight here.
+    needs: [smoke-staging]
+    if: |
+      always() &&
+      ((github.event_name == 'push' && needs.smoke-staging.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' && inputs.target == 'production'))
+    runs-on: ubuntu-latest
+    # 👤 GATE 4 — "production" environment has Required reviewers (set by scripts/setup-github.sh).
+    # The job pauses here until a human clicks "Approve and deploy".
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.ref || github.sha }}" }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - id: deploy
+        run: ./scripts/deploy.sh production "${{ inputs.ref || github.sha }}"
+        env:
+          DEPLOY_TOKEN: ${{ secrets.PRODUCTION_DEPLOY_TOKEN }}
+      - name: Production smoke test
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm test:e2e --grep @smoke-prod
+        env:
+          BASE_URL: ${{ steps.deploy.outputs.url }}
+
+  post-deploy-report:
+    needs: production
+    if: needs.production.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Wait for traffic
+        run: sleep 1800   # 30 min of real traffic before judging
+      - uses: anthropics/claude-code-action@v1
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}   # TODO: read-only token for your monitoring
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Use the ops-monitor agent. A production deploy of ${{ github.sha }} finished about 30 minutes ago.
+            Compare health before vs after (see docs/ai-workflow.md "Monitoring sources").
+            Open a GitHub issue titled "Post-deploy report ${{ github.sha }}" with the report and label it
+            "deploy-report" plus "incident" if status is 🔴. Never roll back yourself.
+          claude_args: >-
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Task,Agent,WebFetch,Bash(git log:*),Bash(gh pr list:*),Bash(gh issue create:*),Bash(curl -s:*)"

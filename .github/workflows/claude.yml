@@ -1,0 +1,41 @@
+# Ad-hoc help: mention @claude in an issue/PR comment, e.g.
+#   "@claude แก้ตาม review ข้อ 2 ให้หน่อย"   "@claude อธิบายว่าทำไม test นี้ fail"
+# Only repo members can trigger it.
+name: Claude (@mention)
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read
+
+jobs:
+  claude:
+    if: |
+      (contains(github.event.comment.body, '@claude') || contains(github.event.review.body, '@claude')) &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+               github.event.comment.author_association || github.event.review.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: >-
+            --max-turns 40
+            --allowedTools "Read,Write,Edit,Glob,Grep,Task,Agent,Bash(git add:*),Bash(git commit:*),Bash(git push origin ai/*),Bash(git diff:*),Bash(git log:*),Bash(git status:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(pnpm lint:*),Bash(pnpm typecheck:*),Bash(pnpm test:*),Bash(pnpm build:*)"

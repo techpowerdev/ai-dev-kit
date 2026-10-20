@@ -1,0 +1,42 @@
+name: 🐛 Bug report
+description: แจ้งบั๊ก — AI จะวิเคราะห์และเขียน test ที่จำลองบั๊กก่อนแก้
+title: "[Bug] "
+labels: ["type:bug", "ai:spec"]
+body:
+  - type: dropdown
+    id: severity
+    attributes:
+      label: ความรุนแรง
+      options:
+        - "S1 — ระบบล่ม / จ่ายเงินไม่ได้ / ข้อมูลเสียหาย"
+        - "S2 — ฟีเจอร์หลักใช้ไม่ได้ แต่มีทางเลี่ยง"
+        - "S3 — ผิดพลาดเล็กน้อย / หน้าตา"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: เกิดที่ไหน
+      placeholder: "production / staging / preview-PR-123, browser, mobile/desktop"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: ขั้นตอนทำให้เกิด
+      placeholder: |
+        1. เข้า /products/xxx
+        2. ใส่ตะกร้า 2 ชิ้น
+        3. ใช้คูปอง SAVE10
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: ควรเป็นอย่างไร / เป็นอย่างไรจริง
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshot / log / order id (ห้ามใส่ข้อมูลบัตรหรือข้อมูลส่วนตัวลูกค้า)

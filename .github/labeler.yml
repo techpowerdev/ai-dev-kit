@@ -1,0 +1,32 @@
+# Used by .github/workflows/risk-label.yml (actions/labeler@v5)
+"risk:high":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/payment*/**"
+          - "**/checkout/**"
+          - "**/order*/**"
+          - "**/pricing/**"
+          - "**/promotion*/**"
+          - "**/auth/**"
+          - "**/middlewares*"
+          - "**/migrations/**"
+          - ".github/workflows/**"
+          - ".claude/**"
+          - "CLAUDE.md"
+          - "scripts/**"
+
+"area:storefront":
+  - changed-files:
+      - any-glob-to-any-file: "apps/storefront/**"
+
+"area:backend":
+  - changed-files:
+      - any-glob-to-any-file: "apps/backend/**"
+
+"area:vendor":
+  - changed-files:
+      - any-glob-to-any-file: "apps/vendor/**"
+
+"dependencies":
+  - changed-files:
+      - any-glob-to-any-file: ["**/package.json", "pnpm-lock.yaml"]

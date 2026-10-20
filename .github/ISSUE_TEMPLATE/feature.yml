@@ -1,0 +1,40 @@
+name: ✨ Feature request
+description: งานใหม่ — AI จะร่าง spec ให้อัตโนมัติ (ต้องมีคนอนุมัติก่อนเริ่มเขียนโค้ด)
+title: "[Feature] "
+labels: ["type:feature", "ai:spec"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        เขียนสั้น ๆ ได้ — AI (product-analyst) จะขยายเป็น spec ให้ แล้วถามกลับถ้ามีจุดที่ไม่ชัด
+        ถ้าไม่ต้องการให้ AI ทำ ให้ลบ label `ai:spec` ออก
+  - type: textarea
+    id: problem
+    attributes:
+      label: ปัญหา / โอกาส
+      description: ใครเจอปัญหาอะไร ทำไมต้องทำตอนนี้
+      placeholder: "ร้านค้า (vendor) ไม่สามารถตั้งโปรโมชันซื้อ 2 แถม 1 ได้ ทำให้ ..."
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: ผลลัพธ์ที่ต้องการ
+      placeholder: "vendor ตั้งโปรได้เองจากหน้า vendor panel และลูกค้าเห็นราคาหลังลดในตะกร้า"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: ส่วนที่เกี่ยวข้อง
+      multiple: true
+      options: [Storefront, Vendor panel, Admin panel, Checkout / Payment, Pricing / Promotion, Order / Fulfillment, Auth / Account, Infra / DevOps, อื่น ๆ]
+  - type: textarea
+    id: constraints
+    attributes:
+      label: ข้อจำกัด / กฎธุรกิจที่รู้แล้ว (ถ้ามี)
+      placeholder: "โปรห้ามซ้อนกับคูปองส่วนลด, ต้องรองรับ THB อย่างเดียวก่อน"
+  - type: textarea
+    id: refs
+    attributes:
+      label: ตัวอย่าง / ภาพ / ลิงก์อ้างอิง

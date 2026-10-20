@@ -1,0 +1,19 @@
+# Who must approve changes in each path.
+# TODO: replace @your-github-username / @your-org/team with real handles.
+
+*                                   @your-github-username
+
+# 🔴 High-risk — owner review is mandatory (branch protection: "Require review from Code Owners")
+**/payment*/**                      @your-github-username
+**/checkout/**                      @your-github-username
+**/order*/**                        @your-github-username
+**/pricing/**                       @your-github-username
+**/promotion*/**                    @your-github-username
+**/auth/**                          @your-github-username
+**/migrations/**                    @your-github-username
+
+# The AI's own rules and the pipeline — AI must never approve changes to its own guardrails
+/CLAUDE.md                          @your-github-username
+/.claude/                           @your-github-username
+/.github/                           @your-github-username
+/scripts/                           @your-github-username
