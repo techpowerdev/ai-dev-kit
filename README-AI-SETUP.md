@@ -10,6 +10,8 @@
 
 ## ขั้นตอน
 
+> **รันคำสั่งที่ไหน:** คำสั่งใน code block ของ bash รันใน terminal (Terminal ของ macOS หรือ terminal ใน VS Code) จาก root ของ repo ส่วนคำสั่งที่ขึ้นต้นด้วย `/` เช่น `/install-github-app` หรือ `/spec 12` ให้พิมพ์ในแชทของ Claude Code
+
 **1. คัดลอกไฟล์เข้า repo**
 ```bash
 rsync -a --prune-empty-dirs \
@@ -39,6 +41,8 @@ grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts doc
 
 **3. ติดตั้ง Claude GitHub App** → https://github.com/apps/claude
 หรือเปิด Claude Code ใน repo แล้วพิมพ์ `/install-github-app`
+- เลือกติดตั้งให้ repo นี้ (หรือ All repositories) ต้องเป็น admin ของ repo
+- **ถ้าข้ามขั้นนี้** job AI จะ fail ด้วย `401 Unauthorized - Claude Code is not installed on this repository` แม้จะตั้ง secret ถูกแล้ว ติดตั้งแอปแล้วกด **Re-run failed jobs** ใน Actions
 
 **4. ตั้ง secrets**
 
@@ -56,6 +60,14 @@ grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts doc
 gh secret set ANTHROPIC_API_KEY          # หรือ
 gh secret set CLAUDE_CODE_OAUTH_TOKEN
 ```
+ตั้ง `CLAUDE_CODE_OAUTH_TOKEN` ทีละขั้น:
+```bash
+claude setup-token                                        # เปิด browser ให้ login claude.ai แล้วแสดง token ใน terminal
+gh secret set CLAUDE_CODE_OAUTH_TOKEN -R <owner>/<repo>   # วาง token แล้วกด Enter (ตัวอักษรไม่ขึ้นจอ เป็นปกติ)
+gh secret list -R <owner>/<repo>                          # เช็คว่ามีชื่อ secret แล้ว (ไม่แสดงค่า)
+```
+- **อย่าวาง token ในแชท, issue, PR หรือ commit** token ใช้แทนบัญชี subscription ของคุณได้
+- **token หมดอายุใน 1 ปี** ให้รัน `claude setup-token` ใหม่ แล้ว `gh secret set` ทับค่าเดิม
 - **อย่าตั้งทั้งสองตัว** ถ้ามีทั้งคู่ Claude จะใช้ API key และคิดเงินแบบ API โดยไม่เตือน
 - **token จาก subscription ผูกกับบัญชีคนที่สร้าง** และใช้โควต้าร่วมกับ Claude Code ในเครื่อง เอกสารของ Anthropic แนะนำให้ใช้ API key สำหรับ secret ที่ใช้ร่วมกันทั้งองค์กร
 - **การลบ secret ไม่ได้ยกเลิก credential** ต้องลบ key ใน Console หรือรอ token หมดอายุ
@@ -77,11 +89,19 @@ gh secret set SENTRY_READ_TOKEN        # optional, read-only
 # ทำคนเดียว
 ./scripts/setup-github.sh <owner>/<repo> <your-github-username> --solo
 ```
-- **ทีม**: ทุก PR ต้องมีคน approve 1 คน + CODEOWNERS, admin ยัง bypass ได้ตอนฉุกเฉิน
-- **`--solo`**: GitHub ไม่ให้ approve PR ตัวเอง จึงไม่บังคับ approve แต่ยังต้องเปิด PR และ CI ต้องเขียว กฎนี้ใช้กับ admin ด้วย (bypass ไม่ได้) ส่วน 👤 Gate 4 ยังต้องกด approve deploy production เอง
+- **ทีม** (ไม่ใส่ `--solo`): ทุก PR ต้องมีคน approve 1 คน, ต้องผ่าน CODEOWNERS review และ approve ใหม่หลัง push ล่าสุด admin ยัง bypass ได้ตอนฉุกเฉิน
+- **`--solo`**: GitHub ไม่ให้ approve PR ตัวเอง จึงไม่บังคับ approve แต่ยังต้องเปิด PR และ CI ต้องเขียว (เมื่อ main มี `package.json` แล้ว) กฎนี้ใช้กับ admin ด้วย (bypass ไม่ได้) ส่วน 👤 Gate 4 ยังต้องกด approve deploy production เอง
 - รันซ้ำได้ เช่นเมื่อเพิ่มคนในทีมแล้วเปลี่ยนจาก `--solo` เป็นโหมดทีม
 > รันหลังจาก push workflow แล้ว และ CI รันผ่านอย่างน้อย 1 ครั้ง เพื่อให้ GitHub รู้จักชื่อ status check
 > ถ้า repo ยังไม่มี `package.json` สคริปต์จะยังไม่บังคับ CI (ไม่งั้น main จะ merge ไม่ได้เลย) ให้รันซ้ำหลังใส่โค้ดแอปแล้ว
+
+**เช็คผลหลังตั้งค่า** — บรรทัด `main:` ที่สคริปต์พิมพ์ต้องมีคำว่า `green CI required` ถ้าขึ้น `CI NOT required yet` แปลว่า main ยังไม่มี `package.json` แล้วเช็คบน GitHub:
+```bash
+R=$(gh repo view --json nameWithOwner -q .nameWithOwner)   # repo ของโฟลเดอร์ปัจจุบัน
+gh api repos/$R/branches/main/protection --jq '{checks: .required_status_checks.contexts, enforce_admins: .enforce_admins.enabled, approvals: .required_pull_request_reviews.required_approving_review_count}'
+gh api repos/$R/environments --jq '[.environments[].name]'   # ต้องมี preview, staging, production, post-deploy-report
+gh secret list -R $R                                         # ต้องมี Claude credential หนึ่งตัว
+```
 
 **6. ทดลอง**
 1. สร้าง issue จาก template "✨ Feature request" (เรื่องเล็ก ๆ เช่น เปลี่ยนข้อความปุ่ม)
@@ -99,7 +119,8 @@ claude
 หรือเรียก agent ตรง ๆ: "ใช้ security-reviewer ตรวจ branch นี้"
 
 ## ข้อควรรู้
-- **ทำคนเดียว:** GitHub ไม่ให้อนุมัติ PR ของตัวเอง — PR ที่ AI เปิด (ผ่าน Claude app) คุณอนุมัติได้ แต่ PR ที่คุณเปิดเองให้ใช้ทีมช่วย review หรือปรับ branch protection
+- **ทำคนเดียว:** ใช้ `setup-github.sh ... --solo` (ขั้นตอนที่ 5) GitHub ไม่ให้อนุมัติ PR ของตัวเอง โหมดนี้จึงไม่บังคับ approve แต่ยังบังคับ PR และบังคับ CI เขียวเมื่อ main มี `package.json` แล้ว
+- **หลังเปิด branch protection:** วิธี merge PR, การกด "Update branch" และ PR ของ dependabot ดูที่ [docs/ai-workflow.md](docs/ai-workflow.md) หัวข้อ "Merge PR หลังเปิด branch protection"
 - **ค่าใช้จ่าย:** ทุก workflow ใช้ Claude (ค่า API หรือโควต้า subscription แล้วแต่ credential ที่ตั้ง) + Actions minutes ตั้ง `--max-turns` ไว้แล้ว ปรับได้ใน workflow; `post-deploy-report` รอ 30 นาทีด้วย wait timer ของ environment `post-deploy-report` ระหว่างรอไม่กิน runner minutes (wait timer ใช้ได้กับ public repo หรือ private repo บน GitHub Pro/Team/Enterprise ถ้าไม่มี report จะรันทันทีหลัง deploy)
 - **Model:** ปรับใน frontmatter ของแต่ละ agent (`model: sonnet|opus|haiku|inherit`)
 - **ปรับปรุงต่อเนื่อง:** AI ผิดซ้ำเรื่องไหน → เพิ่มกฎใน `CLAUDE.md` หรือไฟล์ agent นั้น
