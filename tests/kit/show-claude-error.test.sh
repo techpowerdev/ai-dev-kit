@@ -86,13 +86,50 @@ J
 out="$(run "$tmp/credit.json")"
 has   "credit: errors[] shown"         "$out" "credit balance is too low"
 has   "credit: credit hint"            "$out" "out of credit"
-has   "credit: null input handled"     "$out" "denied a tool::Bash: {}"
+has   "credit: null input handled"     "$out" "denied a tool::Bash: (input hidden)"
 
 # 9. Words like "token" or "login" in an unrelated error give no credential hint
 printf '%s\n' '[{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Prompt is too long: 250000 tokens > 200000 maximum; see the login docs"}]' >"$tmp/toolong.json"
 out="$(run "$tmp/toolong.json")"
 has   "toolong: error shown"           "$out" "Prompt is too long"
 lacks "toolong: no credential hint"    "$out" "credential was rejected"
+
+# 10. Denied commands are cut at the first quote, heredoc or $( so their payload stays out of logs
+cat >"$tmp/payload.json" <<'J'
+[{"type":"result","subtype":"success","is_error":false,"permission_denials":[
+  {"tool_name":"Bash","tool_input":{"command":"gh pr comment 7 --body '## AI Review SECRET-A'"}},
+  {"tool_name":"Bash","tool_input":{"command":"cat > /tmp/r.md <<'EOF' SECRET-B"}},
+  {"tool_name":"Bash","tool_input":{"command":"echo $(cat SECRET-C)"}},
+  {"tool_name":"Grep","tool_input":{"pattern":"needle"}},
+  {"tool_name":"Bash","tool_input":{"command":"gh pr comment 10 --body '## AI Review\n\nSECRET-D on line 3'"}}]}]
+J
+out="$(run "$tmp/payload.json")"
+has   "payload: command kept"          "$out" "Bash: gh pr comment 7 --body"
+has   "payload: heredoc cut"           "$out" "Bash: cat > /tmp/r.md"
+has   "payload: substitution cut"      "$out" "Bash: echo"
+has   "payload: non-Bash tool kept"    "$out" "Grep: needle"
+lacks "payload: quoted body hidden"    "$out" "SECRET-A"
+lacks "payload: heredoc body hidden"   "$out" "SECRET-B"
+lacks "payload: substitution hidden"   "$out" "SECRET-C"
+lacks "payload: multi-line body hidden" "$out" "SECRET-D"
+has   "payload: multi-line cmd kept"   "$out" "Bash: gh pr comment 10 --body"
+
+# 11. Cancelled step with no execution file: a notice, not a false "Claude failed"
+out="$(bash scripts/show-claude-error.sh "$tmp/none.json" cancelled 2>&1)"
+has   "cancelled: notice"              "$out" "::notice title=Claude was cancelled::"
+lacks "cancelled: no error"            "$out" "::error"
+out="$(bash scripts/show-claude-error.sh "$tmp/none.json" failure 2>&1)"
+has   "failed early: still an error"   "$out" "::error title=Claude failed::No execution file"
+
+# 12. A malformed tool_input does not hide the other denials
+cat >"$tmp/malformed.json" <<'J'
+[{"type":"result","subtype":"success","is_error":false,"permission_denials":[
+  {"tool_name":"Bash","tool_input":"not an object"},
+  {"tool_name":"Read","tool_input":{"file_path":"/etc/hosts"}}]}]
+J
+out="$(run "$tmp/malformed.json")"
+has   "malformed: hidden"              "$out" "Bash: (input hidden)"
+has   "malformed: others still shown"  "$out" "Read: /etc/hosts"
 
 echo "   show-claude-error: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
