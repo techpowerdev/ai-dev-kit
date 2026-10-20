@@ -29,6 +29,7 @@ pnpm build
 - Every new API route: input validation (zod) + auth middleware + test.
 - Commits: Conventional Commits (`feat:`, `fix:`, `chore:` …). One logical change per PR.
 - Branch names: `ai/<issue-number>-<slug>` for AI work, `feat/…`, `fix/…` for humans.
+- E2E tags: `@smoke` runs against staging after every deploy. `@smoke-prod` runs against **real production** and must be strictly read-only: no sign-ups, carts, orders, payments, reviews, vendor or product changes, and no emails or webhooks triggered. Only GET pages/APIs and assert on what is already there. A test that needs to write data is `@smoke`, never `@smoke-prod`.
 
 ## 4. 🔴 High-risk areas — extra care, human must review line by line
 - `**/payment*/**`, `**/checkout/**`, `**/order*/**`
@@ -44,6 +45,7 @@ When a task touches these: say so explicitly in the PR, add tests for edge cases
 - Never read, print, or commit `.env*`, secrets, or real customer data.
 - Never disable tests, lint rules, or type checks to make CI pass.
 - Never run migrations or scripts against staging/production.
+- Never tag a test `@smoke-prod` if it creates, changes or deletes anything (see §3 E2E tags).
 - Never add a dependency without stating why in the PR (license + size + maintenance).
 
 ## 6. Definition of Done (AI)
