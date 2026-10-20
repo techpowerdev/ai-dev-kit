@@ -58,6 +58,7 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"   # subagents must finish before the run ends; in CI the process exits with the main turn
           BASE_URL: ${{ needs.deploy-preview.outputs.url }}
         with:
           # Either secret works: a Console API key (billed per token) or a Claude

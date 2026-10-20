@@ -37,6 +37,14 @@ for f in .claude/commands/*.md; do
     expect "$f delegates but does not require foreground subagents" grep -q 'Run every delegation in the foreground' "$f"
   fi
 done
+bg_off="$(grep -rhc --include='*.yml' 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"' .github/workflows | awk '{s+=$1} END {print s}')"
+claude_runs="$(grep -rhc --include='*.yml' 'anthropics/claude-code-action@' .github/workflows | awk '{s+=$1} END {print s}')"
+expect "every Claude step disables background tasks ($bg_off of $claude_runs)" test "$bg_off" -eq "$claude_runs"
+for f in .claude/commands/*.md; do
+  if grep -q 'Run every delegation in the foreground' "$f"; then
+    expect "$f tells Claude to run shell commands one at a time" grep -q 'Run each shell command on its own' "$f"
+  fi
+done
 expect "claude-review.yml fails when no review was posted" grep -q 'title=AI review not posted' .github/workflows/claude-review.yml
 while read -r c; do
   expect "a workflow runs missing command '/$c'" test -f ".claude/commands/$c.md"
