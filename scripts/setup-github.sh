@@ -88,7 +88,8 @@ echo "   main: $reviews_msg, $checks_msg, no force push"
 echo "==> Environments"
 REVIEWER_ID=$(gh api "users/$REVIEWER" --jq .id)
 VISIBILITY=$(gh api "repos/$REPO" --jq .visibility)
-if [[ "$VISIBILITY" != "public" ]]; then
+GATE4_OFF=false
+if [[ "$VISIBILITY" == "private" ]]; then
   echo "   ⚠️  $REPO is $VISIBILITY. Required reviewers (Gate 4) and wait timers only work on"
   echo "       public repos or with GitHub Enterprise. On Free, Pro or Team, production deploys"
   echo "       will NOT wait for approval and the post-deploy report will not wait 30 minutes."
@@ -109,11 +110,15 @@ put_env() {  # put_env <name> <json-with-rules> <json-without-rules>
   if err="$(gh api -X PUT "repos/$REPO/environments/$1" --input - 2>&1 >/dev/null <<<"$2")"; then
     return 0
   fi
-  if [[ "$VISIBILITY" != "public" && "$err" == *422* ]]; then
-    echo "   ⚠️  GitHub rejected the protection rules for '$1' on this $VISIBILITY repo (plan limit):"
+  if [[ "$VISIBILITY" == "private" && "$err" == *"HTTP 422"* ]]; then
+    echo "   ⚠️  GitHub rejected the protection rules for '$1' on this private repo (likely the plan limit):"
     echo "       $err"
+    if ! gh api -X PUT "repos/$REPO/environments/$1" --input - >/dev/null <<<"$3"; then
+      echo "   ✗ Could not create '$1' even without protection rules." >&2
+      exit 1
+    fi
     echo "       Created '$1' without them."
-    gh api -X PUT "repos/$REPO/environments/$1" --input - >/dev/null <<<"$3"
+    GATE4_OFF=true
     return 1
   fi
   echo "   ✗ Could not create environment '$1' with its protection rules:" >&2
@@ -140,6 +145,11 @@ gh api -X PATCH "repos/$REPO" -f delete_branch_on_merge=true -f allow_squash_mer
   -f allow_merge_commit=false -f allow_rebase_merge=false >/dev/null
 
 echo
+if [[ "$GATE4_OFF" == true || "$VISIBILITY" == "private" ]]; then
+  echo "⚠️  Gate 4 (approval before production) is NOT enforced on this repo. See the warnings above"
+  echo "   and docs/getting-started.md step 0 before setting PRODUCTION_DEPLOY_TOKEN."
+  echo
+fi
 echo "✅ Done. Remaining manual steps:"
 echo "  1. Install the Claude GitHub App:  https://github.com/apps/claude"
 echo "  2. Add ONE Claude credential (AI jobs skip with a warning until one is set):"
