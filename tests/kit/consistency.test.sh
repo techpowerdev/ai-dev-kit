@@ -47,6 +47,13 @@ for f in .claude/commands/*.md; do
 done
 expect "claude-review.yml checks that the review was posted" grep -q 'check-review-posted.sh' .github/workflows/claude-review.yml
 # shellcheck disable=SC2016  # backticks here are literal Markdown, not command substitution
+expect "/review posts the comment from a file, not inline --body" grep -q -- '--body-file .ai-review.md' .claude/commands/review.md
+review_tools="$(grep -h -- '--allowedTools' .github/workflows/claude-review.yml)"
+expect "AI review may write its comment file" grep -qF 'Edit(./.ai-review.md),Write(./.ai-review.md)' <<<"$review_tools"
+broad="$(grep -oE '[",](Write|Edit|MultiEdit)[,"]' <<<"$review_tools" || true)"
+expect "AI review has no broader Write/Edit permission: $broad" none "$broad"
+expect "AI review refuses a committed .ai-review.md" grep -q 'git ls-files --error-unmatch .ai-review.md' .github/workflows/claude-review.yml
+# shellcheck disable=SC2016  # backticks here are literal Markdown, not command substitution
 expect "/review tells Claude to start the comment with the marker the check looks for" grep -q 'start with the line `## AI Review`' .claude/commands/review.md
 # shellcheck disable=SC2016  # backticks here are literal Markdown, not command substitution
 compound="$(grep -rnE '`[^`]*(&&|\|\|)[^`]*`' .claude/commands .claude/agents | grep -v 'without `;`, `&&`' || true)"
