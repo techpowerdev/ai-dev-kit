@@ -52,8 +52,11 @@ if [[ "$tool" == "Bash" ]]; then
   done < <(printf '%s\n' "$cmd" | grep -oE 'gh[[:space:]]+release([[:space:]]+[^[:space:];&|]+)?' | awk '{print $3}')
 
   # --- No secrets in output ----------------------------------------------
-  # Check each token that looks like a path; this ignores words inside strings/heredocs
-  # such as a grep pattern or a .gitignore entry.
+  # Check every whitespace-separated word of the whole command, with quotes removed.
+  # This includes words inside quoted strings, heredocs and commit messages, so a
+  # message that names a secret env file is blocked too (write it to a file and use
+  # `git commit -F`). A word only counts if it is exactly such a path: a regex like
+  # "\.env" or a name like .env.example does not match.
   for tok in $cmd; do
     tok="${tok//[\"\']/}"
     if is_secret_env_path "$tok"; then
