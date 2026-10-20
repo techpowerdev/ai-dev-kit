@@ -80,5 +80,25 @@ for target in preview staging production; do
   expect "deploy.sh $target writes url=... to GITHUB_OUTPUT" grep -qE '^url=https?://' "$out"
 done
 
+# Placeholder deploy.sh must say it is not configured, so nothing tests a fake URL.
+: >"$out"; GITHUB_OUTPUT="$out" bash scripts/deploy.sh staging test-ref >/dev/null 2>&1 || true
+expect "placeholder deploy.sh reports configured=false" grep -qx 'configured=false' "$out"
+job_block() { sed -n "/^  $2:/,/^  [a-z]/p" ".github/workflows/$1"; }
+for jw in "deploy.yml smoke-staging staging" "preview.yml ai-qa deploy-preview" "deploy.yml post-deploy-report production"; do
+  read -r wf job dep <<<"$jw"
+  expect "$wf job '$job' is skipped when '$dep' is not configured" \
+    grep -qF "needs.$dep.outputs.configured != 'false'" <<<"$(job_block "$wf" "$job")"
+done
+expect "production smoke test is skipped when not configured" \
+  grep -qF "steps.deploy.outputs.configured != 'false'" <<<"$(job_block deploy.yml production)"
+
+# Every Claude step outside the human-triggered workflows skips cleanly without an API key.
+for jw in "claude-review.yml review" "preview.yml ai-qa" "deploy.yml post-deploy-report"; do
+  read -r wf job <<<"$jw"
+  block="$(job_block "$wf" "$job")"
+  gated="$(grep -B1 'anthropics/claude-code-action' <<<"$block" | head -1)"
+  expect "$wf job '$job' runs Claude only when ANTHROPIC_API_KEY is set" grep -qF "env.HAS_ANTHROPIC_KEY == 'true'" <<<"$gated"
+done
+
 echo "   consistency: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

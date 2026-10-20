@@ -39,6 +39,7 @@ jobs:
       url: ${{ steps.deploy.outputs.url }}
     outputs:
       url: ${{ steps.deploy.outputs.url }}
+      configured: ${{ steps.deploy.outputs.configured }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { ref: "${{ inputs.ref || github.sha }}" }
@@ -53,6 +54,9 @@ jobs:
 
   smoke-staging:
     needs: staging
+    # Placeholder deploy.sh reports configured=false: there is nothing to smoke-test, and
+    # because production requires this job to succeed, production is skipped too.
+    if: needs.staging.outputs.configured != 'false'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,6 +82,8 @@ jobs:
     environment:
       name: production
       url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      configured: ${{ steps.deploy.outputs.configured }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { ref: "${{ inputs.ref || github.sha }}" }
@@ -90,6 +96,7 @@ jobs:
         env:
           DEPLOY_TOKEN: ${{ secrets.PRODUCTION_DEPLOY_TOKEN }}
       - name: Production smoke test
+        if: steps.deploy.outputs.configured != 'false'
         run: |
           pnpm exec playwright install --with-deps chromium
           pnpm test:e2e --grep @smoke-prod
@@ -98,17 +105,23 @@ jobs:
 
   post-deploy-report:
     needs: production
-    if: needs.production.result == 'success'
+    if: needs.production.result == 'success' && needs.production.outputs.configured != 'false'
     runs-on: ubuntu-latest
+    env:
+      # Lets the job skip cleanly (with a warning) instead of failing when the key is not set yet.
+      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     # Waits for 30 min of real traffic before judging. The delay comes from the
     # "post-deploy-report" environment's wait timer (set by scripts/setup-github.sh),
     # so no runner is held — unlike a `sleep` step, waiting costs no Actions minutes.
     # If that environment is missing, GitHub creates it with no timer and this runs immediately.
     environment: post-deploy-report
     steps:
+      - if: env.HAS_ANTHROPIC_KEY != 'true'
+        run: echo "::warning::ANTHROPIC_API_KEY is not set — skipping the post-deploy report. Add it with gh secret set ANTHROPIC_API_KEY."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
-      - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+      - if: env.HAS_ANTHROPIC_KEY == 'true'
+        uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_READ_TOKEN }}   # TODO: read-only token for your monitoring
         with:
