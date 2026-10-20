@@ -100,7 +100,8 @@ cat >"$tmp/payload.json" <<'J'
   {"tool_name":"Bash","tool_input":{"command":"gh pr comment 7 --body '## AI Review SECRET-A'"}},
   {"tool_name":"Bash","tool_input":{"command":"cat > /tmp/r.md <<'EOF' SECRET-B"}},
   {"tool_name":"Bash","tool_input":{"command":"echo $(cat SECRET-C)"}},
-  {"tool_name":"Grep","tool_input":{"pattern":"needle"}}]}]
+  {"tool_name":"Grep","tool_input":{"pattern":"needle"}},
+  {"tool_name":"Bash","tool_input":{"command":"gh pr comment 10 --body '## AI Review\n\nSECRET-D on line 3'"}}]}]
 J
 out="$(run "$tmp/payload.json")"
 has   "payload: command kept"          "$out" "Bash: gh pr comment 7 --body"
@@ -110,6 +111,8 @@ has   "payload: non-Bash tool kept"    "$out" "Grep: needle"
 lacks "payload: quoted body hidden"    "$out" "SECRET-A"
 lacks "payload: heredoc body hidden"   "$out" "SECRET-B"
 lacks "payload: substitution hidden"   "$out" "SECRET-C"
+lacks "payload: multi-line body hidden" "$out" "SECRET-D"
+has   "payload: multi-line cmd kept"   "$out" "Bash: gh pr comment 10 --body"
 
 echo "   show-claude-error: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
