@@ -67,16 +67,48 @@
 | 🟡 medium | ฟีเจอร์ใหม่ที่ไม่แตะเงิน/auth | + อ่านส่วน "👀 please look closely at" |
 | 🔴 high | payment, checkout, order, pricing, promotion, auth, migration, workflow/infra | อนุมัติ plan ก่อน + อ่านโค้ดทุกบรรทัดในไฟล์เสี่ยง + ลองบน preview เอง |
 
-`risk:high` ติดอัตโนมัติจาก path (`.github/labeler.yml`) และ CODEOWNERS บังคับให้เจ้าของอนุมัติ
+`risk:high` ติดอัตโนมัติจาก path (`.github/labeler.yml`) ในโหมดทีม CODEOWNERS บังคับให้เจ้าของอนุมัติ ในโหมด `--solo` ไม่มีใครบังคับ ต้องอ่านเองตามตารางนี้
+
+## Merge PR หลังเปิด branch protection
+> สองข้อแรกมีผลเมื่อ main มี `package.json` แล้วเท่านั้น ก่อนหน้านั้น `setup-github.sh` ไม่บังคับ CI เพราะ CI จะ fail ทุกครั้ง หลังเพิ่ม `package.json` ให้รัน `setup-github.sh` ซ้ำ
+
+- **ต้องรอ CI เขียว** check ที่บังคับคือ `lint · typecheck · test · build` และ `e2e (Playwright)` ส่วน AI review, preview และ dependency audit ไม่บังคับ แต่ควรอ่านผลก่อน merge
+- **branch ต้องตามทัน main** ถ้า main ขยับไปแล้ว ปุ่ม merge จะกดไม่ได้ ให้กด **Update branch** ใน PR แล้วรอ CI รอบใหม่
+- **merge ได้แบบ squash อย่างเดียว** branch ถูกลบอัตโนมัติหลัง merge
+- **โหมด `--solo` ใช้กฎกับ admin ด้วย** bypass ไม่ได้ ถ้า CI พังจากสาเหตุภายนอก ให้แก้ใน PR หรือรัน `setup-github.sh` แบบไม่ใส่ `--solo` ชั่วคราว (admin bypass ได้) แล้วรันกลับเป็น `--solo`
+- **PR ของ dependabot** ไม่ได้รับ secrets จึงไม่มี AI review ให้เช็คว่า SHA ใหม่มาจาก repo ทางการของ action และอ่าน release notes ถ้าเป็นการขึ้น major version **อย่าเพิ่ม Claude credential เป็น Dependabot secret** เพื่อให้มี AI review เพราะจะให้ PR ที่ bot สร้างใช้ credential ได้ ในโหมดทีม PR ที่แตะ `.github/` ยังต้องให้ CODEOWNERS approve
 
 ## ชั้นป้องกัน (ทำไม AI พังของไม่ได้)
 1. **CLAUDE.md** — กฎ "Never do"
 2. **`.claude/settings.json`** — allow / ask / deny ระดับคำสั่ง
 3. **`.claude/hooks/guard.sh`** — บล็อก push main, force push, merge, อ่าน .env ซ้ำอีกชั้น
 4. **Workflow `--allowedTools`** — AI ใน GitHub ใช้ได้เฉพาะเครื่องมือที่อนุญาต
-5. **Branch protection** — merge ได้ทางเดียวคือ PR + คนอนุมัติ + CI เขียว
+5. **Branch protection** — merge ได้ทางเดียวคือ PR + CI เขียว (+ คนอนุมัติในโหมดทีม)
 6. **Environment `production`** — deploy ต้องมีคนกดอนุมัติ, secret prod อยู่ใน environment เท่านั้น
 7. **Bot ไม่สามารถกด gate เอง** — workflow ไม่ทำงานถ้า label ถูกใส่โดย bot
+
+### เมื่อ hook บล็อกคำสั่งที่ไม่อันตราย
+`guard.sh` ตรวจข้อความทั้งคำสั่ง shell รวมถึงข้อความ commit และเนื้อหา heredoc จึงบล็อกได้แม้คำนั้นอยู่แค่ในข้อความ สิ่งที่ hook บล็อกทั้งหมด:
+
+| เครื่องมือ | บล็อกเมื่อ |
+|---|---|
+| Bash | `git push` ไป `main`, `master` หรือ `production` (รวม `HEAD:main` และ push จาก branch เหล่านั้นโดยไม่ระบุ refspec) |
+| Bash | `git push` ที่มี `--force` หรือ `-f` |
+| Bash | `git reset --hard origin...` |
+| Bash | `gh pr merge` |
+| Bash | `gh release` ทุกคำสั่งย่อย ยกเว้น `list`, `view`, `download`, `verify`, `verify-asset` |
+| Bash | คำที่เป็น path ของไฟล์ `.env` หรือ `.env.<อะไรก็ได้>` ยกเว้น `.env.example`, `.env.template`, `.env.sample` |
+| Bash | `env` หรือ `printenv` เปล่าๆ และ `printenv`/`env` ตามด้วยชื่อตัวแปรที่มี `KEY`, `SECRET`, `TOKEN`, `PASSWORD` หรือ `DATABASE_URL` |
+| Bash | `psql`, `pg_dump` หรือ `medusa db:migrate` ที่มีคำว่า `prod` หรือ `staging` |
+| Read / Edit / Write | ไฟล์ `.env` ตามกฎเดียวกับข้างบน และ Edit/Write ไฟล์ `.pem`, `.key`, `.p12` |
+
+- **เมื่อคำต้องห้ามอยู่แค่ในข้อความ** เช่นข้อความ commit ที่พูดถึง `.env` ให้เขียนข้อความลงไฟล์ก่อน แล้วใช้ `git commit -F <file>` หรือ `gh pr create --body-file <file>` ใช้ได้เฉพาะกรณีนี้ **ห้ามใช้เลี่ยงสิ่งที่ hook ตั้งใจบล็อก** ซึ่งยังถูกกันโดย `settings.json` และ branch protection อยู่ดี
+- **`rm -rf` ถูก deny ใน `settings.json`:** ใช้โฟลเดอร์ใหม่จาก `mktemp -d` แทนการลบแล้วสร้างใหม่
+- **ทดสอบ hook หลังแก้:** ส่ง tool call จำลองเข้าไป ต้องได้ `exit=2` สำหรับสิ่งที่ต้องบล็อก และ `exit=0` สำหรับคำสั่งใกล้เคียงที่ต้องผ่าน
+  ```bash
+  echo '{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}' | bash .claude/hooks/guard.sh; echo "exit=$?"
+  ```
+- **ถ้า Claude Code ปฏิเสธคำสั่ง** ดูว่ากฎไหนเป็นต้นเหตุด้วย `/permissions` ถ้าคำสั่งนั้นจำเป็นจริง ให้คนรันเองใน terminal
 
 ## Monitoring sources (ให้ ops-monitor ใช้)
 <!-- TODO: เติมของจริง -->
