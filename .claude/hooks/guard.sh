@@ -2,6 +2,7 @@
 # PreToolUse guard — second safety net behind settings.json "deny".
 # Reads the tool call JSON on stdin. Exit code 2 = block and tell Claude why.
 set -euo pipefail
+set -f   # never glob-expand: the hook inspects text, it must not match files on disk
 
 input="$(cat)"
 tool="$(printf '%s' "$input" | jq -r '.tool_name // empty')"
@@ -17,6 +18,46 @@ is_secret_env_path() {
   [[ "$p" =~ (^|/)\.env(\.[A-Za-z0-9_.-]+)?$ ]] || return 1
   [[ "$p" =~ \.env\.(example|template|sample)$ ]] && return 1
   return 0
+}
+
+# Files that hold credentials even though they are not env files: the git config
+# (actions/checkout and claude-code-action store a token there) and process
+# environments under /proc.
+is_credential_path() {
+  [[ "$1" =~ (^|/)\.git/config$ || "$1" =~ ^/proc/[^/]+/environ$ ]]
+}
+
+# Expands one level of {a,b} braces per call, up to 3 levels and 64 variants.
+# Pure string work: nothing is evaluated.
+brace_variants() {
+  local w="$1" depth="${2:-0}" pre body post alt
+  if (( depth < 3 )) && [[ "$w" =~ ^([^{]*)\{([^{}]*)\}(.*)$ ]]; then
+    pre="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"; post="${BASH_REMATCH[3]}"
+    local IFS=','
+    for alt in $body; do brace_variants "$pre$alt$post" $((depth + 1)); done | head -64
+  else
+    printf '%s\n' "$w"
+  fi
+}
+
+# True if a word, after brace expansion, names a secret or credential file, or is a
+# glob whose last part could expand to one (.en*, .en[v], .e?v). Bash globs only
+# match a dotfile when the pattern starts with a literal ".", so "*" or "[.]env"
+# alone do not count.
+names_secret() {
+  local v base name
+  while IFS= read -r v; do
+    is_secret_env_path "$v" && return 0
+    is_credential_path "$v" && return 0
+    base="${v##*/}"
+    if [[ "$base" == .* && "$base" == *[*?[]* ]]; then
+      for name in .env .env.local .env.development .env.test .env.staging .env.production; do
+        # shellcheck disable=SC2053  # $base is intentionally a glob pattern
+        [[ "$name" == $base ]] && return 0
+      done
+    fi
+  done < <(brace_variants "$1")
+  return 1
 }
 
 if [[ "$tool" == "Bash" ]]; then
@@ -52,25 +93,33 @@ if [[ "$tool" == "Bash" ]]; then
   done < <(printf '%s\n' "$cmd" | grep -oE 'gh[[:space:]]+release([[:space:]]+[^[:space:];&|]+)?' | awk '{print $3}')
 
   # --- No secrets in output ----------------------------------------------
-  # Check every word of the whole command, including words inside quoted strings,
-  # heredocs and commit messages, so a message that names a secret env file is
-  # blocked too (write it to a file and use `git commit -F`). Words are split on
-  # whitespace AND shell punctuation (; | & < > ( ) and backticks), so "cat<.env" or
-  # "x;cat .env" cannot hide one. Each word is checked after removing quotes and
-  # backslashes, a leading "--option=" or glued short flag ("-F.env"), and trailing
-  # sentence punctuation. Because backslashes are removed, a grep pattern "\.env" is
-  # blocked too (it cannot be told apart from `cat \.env`); write it as "[.]env".
-  # Names like .env.example do not match.
-  read -r -a words <<<"$(printf '%s' "$cmd" | tr ';|&<>()`\n' '          ')"   # no glob expansion
+  # Best effort and text only: the hook never runs the command, so some ways of
+  # naming a file (a variable set elsewhere, a script, a generated name) are not seen.
+  # Every word of the whole command is checked, including quoted strings, heredocs
+  # and commit messages, so a message that names a secret env file is blocked too
+  # (use `git commit -F <file>`). Words are formed like this:
+  #   - backslash-newline continuations are joined; newlines and ; | & < > ( ) ` = :
+  #     separate words; nothing is glob-expanded here
+  #   - ANSI-C strings $'...' are decoded, then quotes and backslashes are removed,
+  #     so a grep pattern "\.env" is blocked too (write it as "[.]env")
+  #   - a glued short flag (-FPATH) is also checked without the flag
+  #   - one trailing "." or "," is dropped
+  # A word is blocked when names_secret matches it (see above).
+  flat="${cmd//$'\\\n'/}"
+  read -r -a words <<<"$(printf '%s' "$flat" | tr ';|&<>()`=:\n' '          ')"
   for tok in "${words[@]}"; do
+    n=0
+    while [[ "$tok" =~ \$\'([^\']*)\' ]] && (( n++ < 5 )); do
+      decoded="$(printf '%b' "${BASH_REMATCH[1]}")"
+      tok="${tok/"${BASH_REMATCH[0]}"/$decoded}"
+    done
     tok="${tok//[\"\'\\]/}"
-    tok="${tok%%[.,:]}"
+    tok="${tok%[.,]}"
     candidates=("$tok")
-    [[ "$tok" =~ ^--?[A-Za-z0-9_-]+=(.+)$ ]] && candidates+=("${BASH_REMATCH[1]}")   # --body-file=PATH
-    [[ "$tok" =~ ^-[A-Za-z](.+)$ ]] && candidates+=("${BASH_REMATCH[1]}")            # -FPATH
+    [[ "$tok" =~ ^-[A-Za-z](.+)$ ]] && candidates+=("${BASH_REMATCH[1]}")   # -FPATH
     for c in "${candidates[@]}"; do
-      if is_secret_env_path "$c"; then
-        block "command references secret file '$c'"
+      if names_secret "$c"; then
+        block "command references a secret or credential file ('$c')"
       fi
     done
   done
@@ -78,23 +127,32 @@ if [[ "$tool" == "Bash" ]]; then
   [[ "$cmd" =~ (^|[[:space:];&|])(printenv|env)[[:space:]]+[A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL) ]] && block "printing a secret variable"
 
   # --- In CI, comments and PR/issue bodies come only from files in the repo ---
-  # Prompt injection could ask Claude to post a file such as .git/config (which holds
-  # a token) or /proc/self/environ as a comment. In GitHub Actions, a --body-file / -F
-  # for gh pr|issue must be a relative path inside the checkout, outside .git/.
-  if [[ "${GITHUB_ACTIONS:-}" == "true" && "$cmd" =~ gh[[:space:]]+(pr|issue)[[:space:]] ]]; then
-    read -r -a gh_words <<<"$cmd"
+  # Prompt injection could ask Claude to post .git/config (which holds a token) or a
+  # process environment as a comment. In GitHub Actions, for gh pr|issue:
+  #   - no $(...) and no backticks that run a reader command
+  #   - --body-file / -F must be a plain relative path inside the checkout:
+  #     letters, digits, _ . / - only (no $, ~, globs, braces), no ".." segment,
+  #     nothing under .git/
+  if [[ "${GITHUB_ACTIONS:-}" == "true" && "$flat" =~ gh[[:space:]]+(pr|issue)([[:space:]]|$) ]]; then
+    [[ "$flat" == *"\$("* ]] && block "in CI, gh pr/issue commands may not use \$(...)"
+    [[ "$flat" =~ \`[[:space:]]*(cat|head|tail|less|more|base64|xxd|od|strings|env|printenv|sed|awk|grep|git|curl|wget)[[:space:]] ]] \
+      && block "in CI, gh pr/issue commands may not run commands in backticks"
+    read -r -a gh_words <<<"$(printf '%s' "$flat" | tr ';|&<>()\n' '       ')"
     for ((i = 0; i < ${#gh_words[@]}; i++)); do
-      w="${gh_words[i]//[\"\']/}"; f=""
+      w="${gh_words[i]//[\"\']/}"; f="__none__"
       case "$w" in
         --body-file=*) f="${w#--body-file=}" ;;
         --body-file|-F) f="${gh_words[i+1]:-}"; f="${f//[\"\']/}" ;;
         -F?*) f="${w#-F}" ;;
-        *) continue ;;
       esac
-      case "$f" in
-        "" | /* | ~* | *..* | .git | .git/* | ./.git | ./.git/* | -)
-          block "in CI, gh pr/issue may only post a file inside the repo (got '${f:-<none>}')" ;;
-      esac
+      [[ "$f" == "__none__" ]] && continue
+      [[ "$f" =~ ^[A-Za-z0-9_.][A-Za-z0-9_./-]*$ ]] \
+        || block "in CI, gh pr/issue may only post a plain relative file path (got '${f:-<none>}')"
+      norm="/$f/"
+      while [[ "$norm" == *"/./"* ]]; do norm="${norm//\/.\//\/}"; done
+      while [[ "$norm" == *"//"* ]]; do norm="${norm//\/\//\/}"; done
+      [[ "$norm" == *"/../"* || "$norm" == *"/.git/"* ]] \
+        && block "in CI, gh pr/issue may only post a file inside the repo, outside .git/ (got '$f')"
     done
   fi
 
@@ -104,6 +162,7 @@ fi
 
 if [[ "$tool" == "Read" ]]; then
   is_secret_env_path "$path" && block "reading secret file '$path'"
+  is_credential_path "$path" && block "reading a file that holds credentials ('$path')"
 fi
 
 if [[ "$tool" == "Edit" || "$tool" == "Write" || "$tool" == "MultiEdit" || "$tool" == "NotebookEdit" ]]; then

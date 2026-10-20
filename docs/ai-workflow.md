@@ -97,11 +97,13 @@
 | Bash | `git reset --hard origin...` |
 | Bash | `gh pr merge` |
 | Bash | `gh release` ทุกคำสั่งย่อย ยกเว้น `list`, `view`, `download`, `verify`, `verify-asset` |
-| Bash | คำที่เป็น path ของไฟล์ `.env` หรือ `.env.<อะไรก็ได้>` ยกเว้น `.env.example`, `.env.template`, `.env.sample` hook แยกคำตามช่องว่างและเครื่องหมาย shell (`;` `|` `&` `<` `>` `(` `)` backtick) ตัด quote, backslash, `--option=`, `-F` ที่ติดหน้า path และจุดหรือจุลภาคท้ายคำก่อนเช็ค ดังนั้น pattern ของ grep อย่าง `"\.env"` ก็โดนด้วย ให้เขียนเป็น `"[.]env"` แทน |
-| Bash (เฉพาะใน GitHub Actions) | `gh pr ...` หรือ `gh issue ...` ที่ใช้ `--body-file` หรือ `-F` กับไฟล์ที่ไม่ได้อยู่ใน repo: absolute path, `~`, `..`, `-` (stdin) หรือไฟล์ใน `.git/` กันไม่ให้ prompt injection สั่งโพสต์ไฟล์อย่าง `.git/config` เป็น comment |
+| Bash | คำที่อ้างถึงไฟล์ `.env` หรือ `.env.<อะไรก็ได้>` (ยกเว้น `.env.example`, `.env.template`, `.env.sample`), `.git/config` หรือ `/proc/*/environ` รวมถึง glob หรือ brace ที่อาจขยายเป็นไฟล์เหล่านี้ เช่น `.en*` หรือ `{.e,x}nv` hook แยกคำตามช่องว่าง, การขึ้นบรรทัดใหม่, backtick และเครื่องหมาย `; \| & < > ( ) = :` ถอด `$'...'` และตัด quote กับ backslash ก่อนเช็ค pattern ของ grep อย่าง `"\.env"` จึงโดนด้วย ให้เขียนเป็น `"[.]env"` แทน |
+| Bash (เฉพาะใน GitHub Actions) | `gh pr ...` หรือ `gh issue ...` ที่มี `$(...)`, มี backtick ที่รันคำสั่งอ่านไฟล์ หรือใช้ `--body-file` / `-F` กับ path ที่ไม่ใช่ path ธรรมดาใน repo (มี `$`, `~`, glob, `..`, เป็น absolute path หรืออยู่ใน `.git/`) |
 | Bash | `env` หรือ `printenv` เปล่าๆ และ `printenv`/`env` ตามด้วยชื่อตัวแปรที่มี `KEY`, `SECRET`, `TOKEN`, `PASSWORD` หรือ `DATABASE_URL` |
 | Bash | `psql`, `pg_dump` หรือ `medusa db:migrate` ที่มีคำว่า `prod` หรือ `staging` |
-| Read / Edit / Write | ไฟล์ `.env` ตามกฎเดียวกับข้างบน และ Edit/Write ไฟล์ `.pem`, `.key`, `.p12` |
+| Read / Edit / Write | ไฟล์ `.env` ตามกฎเดียวกับข้างบน, Read ไฟล์ `.git/config` และ `/proc/*/environ` และ Edit/Write ไฟล์ `.pem`, `.key`, `.p12` |
+
+hook ตรวจจาก**ข้อความ**ของคำสั่ง ไม่ได้รันคำสั่งจริง จึงเป็นแค่ best effort ชั้นป้องกันหลักคือ `--allowedTools` ของแต่ละ workflow และ deny list ใน `settings.json`
 
 - **เมื่อคำต้องห้ามอยู่แค่ในข้อความ** เช่นข้อความ commit ที่พูดถึง `.env` ให้เขียนข้อความลงไฟล์ก่อน แล้วใช้ `git commit -F <file>` หรือ `gh pr create --body-file <file>` ใช้ได้เฉพาะกรณีนี้ **ห้ามใช้เลี่ยงสิ่งที่ hook ตั้งใจบล็อก** ซึ่งยังถูกกันโดย `settings.json` และ branch protection อยู่ดี
 - **`rm -rf` ถูก deny ใน `settings.json`:** ใช้โฟลเดอร์ใหม่จาก `mktemp -d` แทนการลบแล้วสร้างใหม่
