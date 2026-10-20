@@ -31,7 +31,7 @@ gh api -X PUT "repos/$REPO/branches/main/protection" --input - >/dev/null <<JSON
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["lint · typecheck · test · build", "e2e (Playwright)", "dependency audit"]
+    "contexts": ["lint · typecheck · test · build", "e2e (Playwright)"]
   },
   "enforce_admins": false,
   "required_pull_request_reviews": {

@@ -1,0 +1,58 @@
+# Dependency audit — deliberately NOT a required check.
+# A new advisory in an existing dependency should not turn every unrelated PR red.
+# Instead:
+#   - PRs that change dependencies get audited (visible to the reviewer, not blocking)
+#   - main is audited weekly; a failure opens (or updates) an issue
+name: Dependency audit
+
+on:
+  pull_request:
+    paths:
+      - "**/package.json"
+      - "pnpm-lock.yaml"
+  schedule:
+    - cron: "0 2 * * 1"   # Monday 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - id: lock
+        name: Check lockfile exists
+        run: |
+          if [[ -f pnpm-lock.yaml ]]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          else echo "present=false" >> "$GITHUB_OUTPUT"; echo "::warning::No pnpm-lock.yaml — audit skipped."; fi
+      - if: steps.lock.outputs.present == 'true'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - if: steps.lock.outputs.present == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+      # pnpm audit reads the lockfile; no install needed.
+      - if: steps.lock.outputs.present == 'true'
+        run: pnpm audit --audit-level high
+
+      - name: Open or update issue on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Dependency audit failing on main"
+          existing=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if [[ -n "$existing" ]]; then
+            gh issue comment "$existing" --body "Still failing: $RUN_URL"
+          else
+            gh issue create --title "$title" --label dependencies \
+              --body "Weekly \`pnpm audit --audit-level high\` failed: $RUN_URL"
+          fi
