@@ -53,6 +53,10 @@ allow|Bash|cat apps/backend/.env.template
 allow|Bash|grep -rn "\.env" docs/
 allow|Bash|cat > .gitignore <<'X'
 allow|Bash|cat .environment.md
+# words inside messages count too (documented in guard.sh and docs/ai-workflow.md)
+block|Bash|git commit -m "stop tracking .env"
+allow|Bash|git commit -m "add .env.example for new devs"
+allow|Bash|git commit -F /tmp/msg.txt
 block|Bash|env
 block|Bash|printenv
 block|Bash|printenv DATABASE_URL
