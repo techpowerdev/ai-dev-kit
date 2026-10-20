@@ -97,7 +97,8 @@
 | Bash | `git reset --hard origin...` |
 | Bash | `gh pr merge` |
 | Bash | `gh release` ทุกคำสั่งย่อย ยกเว้น `list`, `view`, `download`, `verify`, `verify-asset` |
-| Bash | คำที่เป็น path ของไฟล์ `.env` หรือ `.env.<อะไรก็ได้>` ยกเว้น `.env.example`, `.env.template`, `.env.sample` |
+| Bash | คำที่เป็น path ของไฟล์ `.env` หรือ `.env.<อะไรก็ได้>` ยกเว้น `.env.example`, `.env.template`, `.env.sample` hook แยกคำตามช่องว่างและเครื่องหมาย shell (`;` `|` `&` `<` `>` `(` `)` backtick) ตัด quote, backslash, `--option=`, `-F` ที่ติดหน้า path และจุดหรือจุลภาคท้ายคำก่อนเช็ค ดังนั้น pattern ของ grep อย่าง `"\.env"` ก็โดนด้วย ให้เขียนเป็น `"[.]env"` แทน |
+| Bash (เฉพาะใน GitHub Actions) | `gh pr ...` หรือ `gh issue ...` ที่ใช้ `--body-file` หรือ `-F` กับไฟล์ที่ไม่ได้อยู่ใน repo: absolute path, `~`, `..`, `-` (stdin) หรือไฟล์ใน `.git/` กันไม่ให้ prompt injection สั่งโพสต์ไฟล์อย่าง `.git/config` เป็น comment |
 | Bash | `env` หรือ `printenv` เปล่าๆ และ `printenv`/`env` ตามด้วยชื่อตัวแปรที่มี `KEY`, `SECRET`, `TOKEN`, `PASSWORD` หรือ `DATABASE_URL` |
 | Bash | `psql`, `pg_dump` หรือ `medusa db:migrate` ที่มีคำว่า `prod` หรือ `staging` |
 | Read / Edit / Write | ไฟล์ `.env` ตามกฎเดียวกับข้างบน และ Edit/Write ไฟล์ `.pem`, `.key`, `.p12` |

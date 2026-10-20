@@ -52,19 +52,51 @@ if [[ "$tool" == "Bash" ]]; then
   done < <(printf '%s\n' "$cmd" | grep -oE 'gh[[:space:]]+release([[:space:]]+[^[:space:];&|]+)?' | awk '{print $3}')
 
   # --- No secrets in output ----------------------------------------------
-  # Check every whitespace-separated word of the whole command, with quotes removed.
-  # This includes words inside quoted strings, heredocs and commit messages, so a
-  # message that names a secret env file is blocked too (write it to a file and use
-  # `git commit -F`). A word only counts if it is exactly such a path: a regex like
-  # "\.env" or a name like .env.example does not match.
-  for tok in $cmd; do
-    tok="${tok//[\"\']/}"
-    if is_secret_env_path "$tok"; then
-      block "command references secret file '$tok'"
-    fi
+  # Check every word of the whole command, including words inside quoted strings,
+  # heredocs and commit messages, so a message that names a secret env file is
+  # blocked too (write it to a file and use `git commit -F`). Words are split on
+  # whitespace AND shell punctuation (; | & < > ( ) and backticks), so "cat<.env" or
+  # "x;cat .env" cannot hide one. Each word is checked after removing quotes and
+  # backslashes, a leading "--option=" or glued short flag ("-F.env"), and trailing
+  # sentence punctuation. Because backslashes are removed, a grep pattern "\.env" is
+  # blocked too (it cannot be told apart from `cat \.env`); write it as "[.]env".
+  # Names like .env.example do not match.
+  read -r -a words <<<"$(printf '%s' "$cmd" | tr ';|&<>()`\n' '          ')"   # no glob expansion
+  for tok in "${words[@]}"; do
+    tok="${tok//[\"\'\\]/}"
+    tok="${tok%%[.,:]}"
+    candidates=("$tok")
+    [[ "$tok" =~ ^--?[A-Za-z0-9_-]+=(.+)$ ]] && candidates+=("${BASH_REMATCH[1]}")   # --body-file=PATH
+    [[ "$tok" =~ ^-[A-Za-z](.+)$ ]] && candidates+=("${BASH_REMATCH[1]}")            # -FPATH
+    for c in "${candidates[@]}"; do
+      if is_secret_env_path "$c"; then
+        block "command references secret file '$c'"
+      fi
+    done
   done
   [[ "$cmd" =~ (^|[[:space:];&|])(printenv|env)[[:space:]]*($|[;&|]) ]] && block "dumping environment variables"
   [[ "$cmd" =~ (^|[[:space:];&|])(printenv|env)[[:space:]]+[A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL) ]] && block "printing a secret variable"
+
+  # --- In CI, comments and PR/issue bodies come only from files in the repo ---
+  # Prompt injection could ask Claude to post a file such as .git/config (which holds
+  # a token) or /proc/self/environ as a comment. In GitHub Actions, a --body-file / -F
+  # for gh pr|issue must be a relative path inside the checkout, outside .git/.
+  if [[ "${GITHUB_ACTIONS:-}" == "true" && "$cmd" =~ gh[[:space:]]+(pr|issue)[[:space:]] ]]; then
+    read -r -a gh_words <<<"$cmd"
+    for ((i = 0; i < ${#gh_words[@]}; i++)); do
+      w="${gh_words[i]//[\"\']/}"; f=""
+      case "$w" in
+        --body-file=*) f="${w#--body-file=}" ;;
+        --body-file|-F) f="${gh_words[i+1]:-}"; f="${f//[\"\']/}" ;;
+        -F?*) f="${w#-F}" ;;
+        *) continue ;;
+      esac
+      case "$f" in
+        "" | /* | ~* | *..* | .git | .git/* | ./.git | ./.git/* | -)
+          block "in CI, gh pr/issue may only post a file inside the repo (got '${f:-<none>}')" ;;
+      esac
+    done
+  fi
 
   # --- No remote DB / prod commands --------------------------------------
   [[ "$cmd" =~ (psql|pg_dump|medusa[[:space:]]+db:migrate).*(prod|staging) ]] && block "DB command against staging/prod"
