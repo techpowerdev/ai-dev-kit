@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Usage: refuse-push.sh --number N --reason fork|not-ai-branch|issue|high-risk [--slug OWNER/REPO]
-# Env: GH_TOKEN (github.token is enough), GITHUB_REPOSITORY (or --slug)
+# Env: GH_TOKEN — must be github.token (comments then come from github-actions[bot],
+#      which cannot trigger @-mention workflows), GITHUB_REPOSITORY (or --slug)
 #
 # Trusted. Explains on the PR or issue why the AI's commits were not pushed. Posts a
 # fixed message (no text from the Claude job), pushes nothing, creates no branch,
@@ -24,7 +25,7 @@ done
 case "$reason" in
   fork)          why="PR นี้มาจาก fork ซึ่ง AI ไม่มีสิทธิ์ push ไปที่ branch นั้น" ;;
   not-ai-branch) why="branch ของ PR นี้ไม่ได้ชื่อ \`ai/<issue>-<slug>\` AI push ได้เฉพาะ branch ของ AI เพื่อไม่ไปแก้ branch ของคน" ;;
-  issue)         why="\`@claude\` บน issue ธรรมดาทำได้แค่ตอบ comment (decision 8.1) ถ้าต้องการให้ AI เขียนโค้ด ให้ใช้ label \`ai:spec\` แทน" ;;
+  issue)         why="การ mention Claude บน issue ธรรมดาทำได้แค่ตอบ comment (decision 8.1) ถ้าต้องการให้ AI เขียนโค้ด ให้ใช้ label \`ai:spec\` แทน" ;;
   high-risk)     why="การเปลี่ยนแปลงแตะ path ความเสี่ยงสูง (ตาม \`.github/labeler.yml\`) แต่ issue ยังไม่ผ่าน Gate 1b ให้คนอนุมัติ plan ด้วย label \`approved:plan\` แล้วรันใหม่" ;;
   *) echo "unknown reason: $reason" >&2; exit 2 ;;
 esac

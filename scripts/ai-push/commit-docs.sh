@@ -47,8 +47,9 @@ export GIT_INDEX_FILE="$index"
 ai_git read-tree "$tip"
 for pair in "specs:$spec" "plans:$plan"; do
   kind="${pair%%:*}"; file="${pair#*:}"; path="docs/$kind/$name.md"
-  blob="$(ai_git hash-object -w -- "$file")"
+  blob="$(ai_git hash-object -w --no-filters -- "$file")"
   existing="$(ai_git ls-tree "$tip" -- "$path" | awk '{print $1" "$3}')"
+  [[ "$existing" != 040000* ]] || ai_fail "$path is a directory in the pushed commits."
   if [[ -n "$existing" && "$existing" != "100644 $blob" ]]; then
     # stderr: stdout carries only the SHA (the runner reads workflow commands from both)
     ai_warn "The pushed commits already had $path; it is replaced by the approved version from #$issue." >&2
