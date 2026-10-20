@@ -1,0 +1,33 @@
+# Secrets — never commit (the AI is also blocked from reading/editing these)
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+
+# Dependencies / build output
+node_modules/
+.pnpm-store/
+dist/
+build/
+.next/
+.turbo/
+.medusa/
+coverage/
+
+# Test artifacts
+playwright-report/
+test-results/
+blob-report/
+
+# Local tooling
+.claude/settings.local.json
+.DS_Store
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.vscode/*
+!.vscode/extensions.json
+.idea/
