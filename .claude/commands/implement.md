@@ -5,6 +5,8 @@ argument-hint: <issue-number>
 
 > **Run every delegation in the foreground and wait for its result** before the next step (never `run_in_background`). In GitHub Actions the run ends the moment you stop, which kills background agents and loses their work. Do not end your turn until every step below, including posting comments or opening the PR, is done. Run each shell command on its own, without `;`, `&&`, pipes or redirects: CI only allows the single commands listed for the job, so compound commands are denied.
 
+> **Posting comments:** write the comment with the Write tool to `.ai-comment.md` in the repo root, then post it with `gh issue comment <number> --body-file .ai-comment.md` (or `gh pr comment`). Never pass a comment inline with `--body`: Markdown backticks and `$(...)` make the permission check reject it. The file is gitignored; never `git add` it.
+
 > **In GitHub Actions the machine is deleted when the job ends.** Anything not pushed is lost. Push after every finished plan step, and always leave a comment on the issue before you stop.
 
 1. Confirm the issue has `approved:spec` (and `approved:plan` if risk:high). If not, stop and comment what is missing.
@@ -18,5 +20,5 @@ argument-hint: <issue-number>
 6. If you are blocked, or close to the turn limit, stop after the last pushed step and comment on the issue: steps done, steps left, the blocker, and the branch name. The next `/implement` run continues from that branch.
 7. When every step is done or skipped: delegate to **test-engineer** to fill test gaps against the acceptance criteria, then run `pnpm lint`, `pnpm typecheck`, `pnpm test` and `pnpm build`, each as its own command, and push.
 8. Delegate to **code-reviewer** (and **security-reviewer** if any high-risk path changed). Fix 🛑 Blocking items and push.
-9. Open a PR (or update the existing one for this branch) using `.github/pull_request_template.md`, with `Closes #$ARGUMENTS`. Fill every section honestly, including what you are unsure about and any **needs a human** steps.
+9. If no PR exists for this branch yet (`gh pr view <branch>`), open one using `.github/pull_request_template.md` with `gh pr create --body-file .ai-comment.md`, including `Closes #$ARGUMENTS`. Fill every section honestly, including what you are unsure about and any **needs a human** steps. If a PR already exists (a resumed run), do not create another and do not try to edit it: post a `gh pr comment` on it that lists what this run changed.
 10. Comment on the issue with the PR link. Stop. A human reviews and merges.

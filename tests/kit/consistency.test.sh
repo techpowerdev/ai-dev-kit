@@ -57,6 +57,15 @@ expect "/implement pushes after every plan step" grep -q 'then push right away' 
 expect "/implement resumes from an existing ai/<n>-* branch" grep -q 'continue from it' .claude/commands/implement.md
 # shellcheck disable=SC2016  # literal text to match, not an expansion
 expect "/implement runs tests through pnpm only" grep -q 'Use these `pnpm` scripts only' .claude/commands/implement.md
+for c in spec plan implement; do
+  expect "/$c posts comments from .ai-comment.md, not inline" grep -q -- '--body-file .ai-comment.md' ".claude/commands/$c.md"
+done
+expect ".ai-comment.md is gitignored" grep -qx '.ai-comment.md' .gitignore
+# shellcheck disable=SC2016  # literal Markdown backticks
+expect "/plan comments start with the marker the result check skips" grep -q 'must start with the line `# Plan: <title>`' .claude/commands/plan.md
+# shellcheck disable=SC2016  # literal Markdown backticks
+expect "/spec comments start with the marker the result check skips" grep -q 'must start with the line `# Spec: <title>`' .claude/commands/spec.md
+expect "/implement never opens a second PR on a resumed run" grep -q 'do not create another' .claude/commands/implement.md
 expect "/plan always posts the plan on the issue" grep -q 'whatever the risk level' .claude/commands/plan.md
 expect "claude-review.yml checks that the review was posted" grep -q 'check-review-posted.sh' .github/workflows/claude-review.yml
 # shellcheck disable=SC2016  # backticks here are literal Markdown, not command substitution
