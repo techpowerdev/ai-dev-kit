@@ -11,9 +11,10 @@
 # "# Plan:" (amendment A2):
 #   --approved-by-label  the latest such comment created BEFORE T; fails if it was
 #                        edited after T (changed after approval)
-#   --after-label        the latest such comment created AFTER T (the plan that
-#                        plan-and-build posts right after approved:spec; not approved
-#                        by a human yet, the header says so)
+#   --after-label        the EARLIEST such comment created after T: the plan that
+#                        plan-and-build posts right after approved:spec (not approved
+#                        by a human yet, the header says so). Later "# Plan:" comments,
+#                        e.g. from an @claude run, are not picked up.
 # Approval counts only if: the labeler is a person (not a bot, not null) with write,
 # maintain or admin permission on the repo, and the label was not removed after T.
 # Answers (approved mode): comments by people with write+ permission, not bots,
@@ -74,7 +75,7 @@ if [[ "$how" == approved ]]; then
     "[ .[] | select($is_doc and .created_at < \$t) ] | sort_by(.created_at) | last // empty" <<<"$comments")"
 else
   doc="$(jq -c --arg bot "$bot" --arg h "$heading" --arg t "$T" \
-    "[ .[] | select($is_doc and .created_at > \$t) ] | sort_by(.created_at) | last // empty" <<<"$comments")"
+    "[ .[] | select($is_doc and .created_at > \$t) ] | sort_by(.created_at) | first // empty" <<<"$comments")"
 fi
 [[ -n "$doc" ]] || ai_fail "No '$heading' comment by $bot $( [[ $how == approved ]] && echo before || echo after ) '$label' on #$issue."
 

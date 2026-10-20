@@ -7,8 +7,12 @@
 #   - the TRUSTED part comes first: "Closes #N" and the footer the trusted job wrote
 #     (paths, commits, workflow files), so Claude's text cannot hide or fake it
 #   - then Claude's PR body (UNTRUSTED) if it is a regular file, not a symlink, at most
-#     60000 bytes, with HTML comments opened ("<!--" shown as text) and closing
-#     keywords for other issues defused; otherwise the PR template plus a warning
+#     60000 bytes, with HTML comments opened ("<!--" shown as text) and every closing
+#     keyword that points at an issue turned into "Refs" (#N, owner/repo#N and issue
+#     or pull URLs), so only the trusted "Closes #N" closes anything; otherwise the
+#     PR template plus a warning
+#   - closing keywords in Claude's commit messages (a squash merge can copy them to
+#     the default branch) are listed as a warning in the trusted part
 #   - title: subject of Claude's first commit, control and bidi characters removed,
 #     at most 100 characters (not bytes); "AI: #N" if there is none
 #   - an open PR from this repo's branch is reused; fork PRs with the same branch
@@ -50,20 +54,30 @@ fi
 export AI_ISSUE="$issue"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 body="$work/body.md"
+commit_closers="$(ai_git -C "$repo" log --format=%B "$range" \
+  | grep -oiE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' \
+  | sort -u | head -n 20 || true)"
 {
   echo "Closes #$issue"
   echo
   echo "<!-- trusted: written by the AI push job, not by the AI -->"
   cat "$footer"
+  if [[ -n "$commit_closers" ]]; then
+    echo
+    echo "> ⚠️ Commit messages contain closing keywords; a squash merge may close these issues: $(printf '%s' "$commit_closers" | tr '\n' ',' | sed 's/,$//')"
+  fi
   echo
   echo "---"
   echo
 } >"$body"
 if [[ -n "$body_in" && -f "$body_in" && ! -L "$body_in" ]] && (( $(wc -c <"$body_in") <= 60000 )); then
-  # Untrusted: show HTML comments as text, and defuse closing keywords for other issues
-  # ("Closes #34" becomes "Closes issue 34", which GitHub does not act on).
-  perl -pe 's/<!--/&lt;!--/g; s/\b((?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+)#(\d+)/($2 eq $ENV{AI_ISSUE}) ? "$1#$2" : "$1issue $2"/gie' \
-    "$body_in" >>"$body"
+  # Untrusted: show HTML comments as text, and turn every closing keyword that points
+  # at an issue into "Refs" ("Fixes o/r#34" -> "Refs o/r#34"); GitHub does not close
+  # anything on "Refs". The trusted "Closes #N" above is the only closing reference.
+  perl -pe '
+    s/<!--/&lt;!--/g;
+    s{\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)(\s*:?\s+)(?=(?:[\w.-]+/[\w.-]+)?#\d+|https?://github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+)}{Refs$1}gi;
+  ' "$body_in" >>"$body"
 else
   ai_warn "Claude's PR body is missing, a symlink or too large; using the PR template."
   {

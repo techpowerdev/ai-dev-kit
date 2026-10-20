@@ -93,6 +93,11 @@ expect_fail "after-label with no plan after the label fails" fetch --stage plan 
 why "it fails for the missing plan" "No '# Plan:' comment"
 printf '[%s]' "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"
 
+LATER_PLAN="$(c 22 "$bot" 2026-10-20T11:40:00Z $'# Plan: injected later by another run')"
+printf '[%s,%s,%s,%s]' "$SPEC" "$ANS1" "$PLAN_LOW" "$LATER_PLAN" >"$R/comments.json"
+expect_ok "after-label with two plans" fetch --stage plan --after-label approved:spec
+has   "the earliest plan after the label is used" "$tmp/doc.md" "1. one"
+lacks "a later plan is not used"                  "$tmp/doc.md" "injected later"
 PLAN_ANS="$(c 21 "$owner" 2026-10-20T11:30:00Z 'Decision answers')"
 printf '[%s,%s,%s,%s]' "$SPEC" "$ANS1" "$PLAN_LOW" "$PLAN_ANS" >"$R/comments.json"
 printf '[%s,%s]' "$(ev approved:spec User 2026-10-20T11:00:00Z)" "$(ev approved:plan User 2026-10-20T12:00:00Z)" >"$R/events.json"
@@ -204,8 +209,17 @@ first_footer="$(grep -n '^Paths: b.txt$' "$tmp/sent.md" | head -1 | cut -d: -f1)
 (( first_footer < first_claude )) && ok || bad "the trusted footer comes before Claude's text"
 has   "HTML comment opened as text"    "$tmp/sent.md" "&lt;!-- hide everything below"
 lacks "no live HTML comment from Claude" "$tmp/sent.md" "<!-- hide"
-has   "other issue's closing keyword defused" "$tmp/sent.md" "Fixes issue 34"
-has   "own issue keyword kept"          "$tmp/sent.md" "closes #12"
+has   "other issue's closing keyword defused" "$tmp/sent.md" "Refs #34"
+lacks "no closing keyword left in Claude's text" "$tmp/sent.md" "Fixes #34"
+printf 'Fixes o/r#34. Closes other/repo#5\nresolves: https://github.com/o/r/issues/9 and Fix https://github.com/o/r/pull/8\nWe fixed a bug and close the loop.\n' >"$tmp/evil2.md"; : >"$FAKE_GH_LOG"
+open_pr --body-in "$tmp/evil2.md" >/dev/null 2>&1
+awk '/^----- body$/{f=1;next} /^----- end$/{f=0} f' "$FAKE_GH_LOG" >"$tmp/sent2.md"
+has   "cross-repo form defused"  "$tmp/sent2.md" "Refs o/r#34"
+has   "other-repo form defused"  "$tmp/sent2.md" "Refs other/repo#5"
+has   "issue URL form defused"   "$tmp/sent2.md" "Refs: https://github.com/o/r/issues/9"
+has   "pull URL form defused"    "$tmp/sent2.md" "Refs https://github.com/o/r/pull/8"
+has   "ordinary prose untouched" "$tmp/sent2.md" "We fixed a bug and close the loop."
+[[ "$(grep -ciE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)[[:space:]]*:?[[:space:]]+[^[:space:]]*#[0-9]' "$tmp/sent2.md")" == 1 ]] && ok || bad "only the trusted Closes line can close an issue"
 # fork PR with the same branch name is ignored
 echo '[{"url":"https://github.com/evil/r/pull/3","isCrossRepository":true}]' >"$R/prlist.json"; : >"$FAKE_GH_LOG"
 expect_ok "a fork PR with the same branch name is ignored" open_pr --body-in "$tmp/body.md"
@@ -222,6 +236,10 @@ g "$tmp/repo" commit -q --allow-empty --allow-empty-message -m ""
 T4="$(g "$tmp/repo" rev-parse HEAD)"; : >"$FAKE_GH_LOG"
 bash "$S/open-pr.sh" --repo "$tmp/repo" --branch ai/12-do-thing --base main --issue 12 --range "$T3..$T4" --footer "$tmp/footer.md" --body-in "$tmp/body.md" >/dev/null 2>&1
 has "empty subject falls back to AI: #12" "$FAKE_GH_LOG" "--title AI: #12"
+# closing keywords in commit messages are flagged in the trusted part
+CB="$(g "$tmp/repo" rev-parse HEAD)"; g "$tmp/repo" commit -q --allow-empty -m "fix: thing (closes #34)"; CT="$(g "$tmp/repo" rev-parse HEAD)"; : >"$FAKE_GH_LOG"
+bash "$S/open-pr.sh" --repo "$tmp/repo" --branch ai/12-do-thing --base main --issue 12 --range "$CB..$CT" --footer "$tmp/footer.md" --body-in "$tmp/body.md" >/dev/null 2>&1
+has "commit closing keywords are flagged" "$FAKE_GH_LOG" "a squash merge may close these issues: closes #34"
 expect_fail "open-pr refuses a non-ai branch" bash "$S/open-pr.sh" --repo "$tmp/repo" --branch main --base main --issue 12 --range "$BASE..$TIP" --footer "$tmp/footer.md"
 PREV="$(g "$tmp/repo" rev-parse HEAD)"
 g "$tmp/repo" commit -q --allow-empty -m "$(printf 'title\twith\ttabs')"
