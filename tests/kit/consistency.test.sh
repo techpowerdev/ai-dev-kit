@@ -97,8 +97,20 @@ for jw in "claude-review.yml review" "preview.yml ai-qa" "deploy.yml post-deploy
   read -r wf job <<<"$jw"
   block="$(job_block "$wf" "$job")"
   gated="$(grep -B1 'anthropics/claude-code-action' <<<"$block" | head -1)"
-  expect "$wf job '$job' runs Claude only when ANTHROPIC_API_KEY is set" grep -qF "env.HAS_ANTHROPIC_KEY == 'true'" <<<"$gated"
+  expect "$wf job '$job' runs Claude only when a Claude credential is set" grep -qF "env.HAS_CLAUDE_AUTH == 'true'" <<<"$gated"
 done
+# Every Claude step accepts either credential, so a repo can use an API key or a subscription token.
+claude_steps="$(grep -rc 'anthropics/claude-code-action@' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+# shellcheck disable=SC2016  # the ${{ }} below are literal GitHub expressions to match, not shell
+api_inputs="$(grep -rc 'anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+# shellcheck disable=SC2016  # the ${{ }} below are literal GitHub expressions to match, not shell
+oauth_inputs="$(grep -rc 'claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}' .github/workflows | awk -F: '{s+=$2} END {print s}')"
+expect "all $claude_steps Claude steps pass ANTHROPIC_API_KEY (found $api_inputs)" test "$api_inputs" -eq "$claude_steps"
+expect "all $claude_steps Claude steps pass CLAUDE_CODE_OAUTH_TOKEN (found $oauth_inputs)" test "$oauth_inputs" -eq "$claude_steps"
+# The skip gates must accept either credential, or a token-only repo would skip every AI job.
+while IFS= read -r gate; do
+  expect "HAS_CLAUDE_AUTH checks both credentials: $gate" grep -qE 'ANTHROPIC_API_KEY.*CLAUDE_CODE_OAUTH_TOKEN' <<<"$gate"
+done < <(grep -rh 'HAS_CLAUDE_AUTH:' .github/workflows)
 
 echo "   consistency: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

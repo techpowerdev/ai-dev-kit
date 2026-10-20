@@ -18,17 +18,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # Lets the job skip cleanly (with a warning) instead of failing when the key is not set yet.
-      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+      # Lets the job skip cleanly (with a warning) instead of failing when no Claude credential is set yet.
+      HAS_CLAUDE_AUTH: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
-      - if: env.HAS_ANTHROPIC_KEY != 'true'
-        run: echo "::warning::ANTHROPIC_API_KEY is not set — skipping AI review. Add it with gh secret set ANTHROPIC_API_KEY."
+      - if: env.HAS_CLAUDE_AUTH != 'true'
+        run: echo "::warning::No Claude credential — skipping AI review. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (see README-AI-SETUP.md)."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
-      - if: env.HAS_ANTHROPIC_KEY == 'true'
+      - if: env.HAS_CLAUDE_AUTH == 'true'
         uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         with:
+          # Either secret works: a Console API key (billed per token) or a Claude
+          # subscription token from `claude setup-token` (Pro/Max/Team/Enterprise).
+          # Set only one: if both are set, the API key wins and is billed.
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: "/review ${{ inputs.pr_number }}"
           claude_args: >-
             --max-turns 30

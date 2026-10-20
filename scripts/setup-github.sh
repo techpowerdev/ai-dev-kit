@@ -114,7 +114,9 @@ gh api -X PATCH "repos/$REPO" -f delete_branch_on_merge=true -f allow_squash_mer
 echo
 echo "✅ Done. Remaining manual steps:"
 echo "  1. Install the Claude GitHub App:  https://github.com/apps/claude"
-echo "  2. Add secrets:  gh secret set ANTHROPIC_API_KEY --repo $REPO"
+echo "  2. Add ONE Claude credential (AI jobs skip with a warning until one is set):"
+echo "       gh secret set ANTHROPIC_API_KEY --repo $REPO         # Console API key, billed per token"
+echo "       gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo $REPO   # or: subscription token from 'claude setup-token'"
 echo "     (+ PREVIEW_DEPLOY_TOKEN, STAGING_DEPLOY_TOKEN, PRODUCTION_DEPLOY_TOKEN in their environments,"
 echo "        SENTRY_READ_TOKEN for post-deploy reports)"
 echo "  3. Replace @your-github-username in .github/CODEOWNERS"
