@@ -41,6 +41,8 @@ grep -rn "TODO\|your-github-username\|example.com" CLAUDE.md .github scripts doc
 
 **3. ติดตั้ง Claude GitHub App** → https://github.com/apps/claude
 หรือเปิด Claude Code ใน repo แล้วพิมพ์ `/install-github-app`
+- เลือกติดตั้งให้ repo นี้ (หรือ All repositories) ต้องเป็น admin ของ repo
+- **ถ้าข้ามขั้นนี้** job AI จะ fail ด้วย `401 Unauthorized - Claude Code is not installed on this repository` แม้จะตั้ง secret ถูกแล้ว ติดตั้งแอปแล้วกด **Re-run failed jobs** ใน Actions
 
 **4. ตั้ง secrets**
 
