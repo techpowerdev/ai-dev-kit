@@ -5,19 +5,21 @@
 # A Claude run can end "successfully" without posting (for example when it stops
 # while subagents are still working). This fails unless a bot comment or review
 # starting with "## AI Review" was posted on the PR after the job started.
-# Human comments and other bots' comments do not count.
+# Only comments by $REVIEW_BOT (default claude[bot]) count; human comments and
+# other bots' comments do not.
 set -euo pipefail
 pr="${1:?usage: check-review-posted.sh <pr-number> <started-at>}"
 since="${2:?usage: check-review-posted.sh <pr-number> <started-at>}"
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 marker='## AI Review'
+bot="${REVIEW_BOT:-claude[bot]}"
 
 count_since() {  # count_since <api-path> <timestamp-field>
   gh api "$1" --paginate \
-    | jq -s --arg since "$since" --arg m "$marker" --arg f "$2" '
+    | jq -s --arg since "$since" --arg m "$marker" --arg f "$2" --arg bot "$bot" '
         [ .[] | if type == "array" then .[] else . end
-          | select(.user.type == "Bot" and (.[$f] // "") >= $since
-                   and ((.body // "") | ltrimstr("\n") | startswith($m))) ] | length'
+          | select(.user.login == $bot and (.[$f] // "") >= $since
+                   and ((.body // "") | sub("^\\s+"; "") | startswith($m))) ] | length'
 }
 
 comments="$(count_since "repos/$repo/issues/$pr/comments" created_at)"

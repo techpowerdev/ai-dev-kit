@@ -34,7 +34,8 @@ flat='tostring | gsub("[\\s]+"; " ")'
 
 denied="$(jq -rs "$messages"' | .[] | select(.type == "result") | .permission_denials[]?
   | "\(.tool_name // "unknown tool"): \((.tool_input // {}) as $i
-      | ($i.command // $i.file_path // $i.pattern // $i.url // ($i | tostring)) | '"$flat"' | .[0:160])"
+      | if $i.command then ($i.command | tostring | sub("[\"'"'"'`].*$"; "") | sub("(<<|\\$\\().*$"; "") | gsub("[\\s]+"; " ") | .[0:120])
+        else ($i.file_path // $i.pattern // $i.url // "(input hidden)") | '"$flat"' | .[0:160] end)"
 ' "$file" 2>/dev/null | awk '!seen[$0]++' || true)"
 while IFS= read -r line; do
   [[ -n "$line" ]] && annotate warning "Claude was denied a tool" "$line — allow it in the workflow's --allowedTools if Claude needs it."

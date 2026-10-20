@@ -28,7 +28,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - name: Snapshot CI helpers
-        # Copied before Claude runs, so Claude cannot change the scripts that later steps run.
+        # Copied before Claude runs, so Claude's file edits cannot change the scripts that
+        # later steps run. (Code Claude may run, e.g. pnpm test, is not covered by this.)
         run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh "$RUNNER_TEMP/"
       - if: env.HAS_CLAUDE_AUTH == 'true'
         id: claude
@@ -44,11 +45,11 @@ jobs:
           prompt: "/review ${{ inputs.pr_number }}"
           claude_args: >-
             --max-turns 30
-            --allowedTools "Read,Glob,Grep,Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr checkout:*)"
+            --allowedTools "Read,Glob,Grep,Task,Agent,Edit(./.ai-review.md),Write(./.ai-review.md),Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr checkout:*)"
       - name: Show Claude errors and denied tools
         # claude-code-action hides Claude's output; this prints only errors and denied
         # tool calls (a denied tool can make a "successful" run silently do nothing).
-        if: always() && (steps.claude.outcome == 'success' || steps.claude.outcome == 'failure')
+        if: always() && steps.claude.outcome != 'skipped' && steps.claude.outcome != ''
         env:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
         run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE"

@@ -86,13 +86,30 @@ J
 out="$(run "$tmp/credit.json")"
 has   "credit: errors[] shown"         "$out" "credit balance is too low"
 has   "credit: credit hint"            "$out" "out of credit"
-has   "credit: null input handled"     "$out" "denied a tool::Bash: {}"
+has   "credit: null input handled"     "$out" "denied a tool::Bash: (input hidden)"
 
 # 9. Words like "token" or "login" in an unrelated error give no credential hint
 printf '%s\n' '[{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Prompt is too long: 250000 tokens > 200000 maximum; see the login docs"}]' >"$tmp/toolong.json"
 out="$(run "$tmp/toolong.json")"
 has   "toolong: error shown"           "$out" "Prompt is too long"
 lacks "toolong: no credential hint"    "$out" "credential was rejected"
+
+# 10. Denied commands are cut at the first quote, heredoc or $( so their payload stays out of logs
+cat >"$tmp/payload.json" <<'J'
+[{"type":"result","subtype":"success","is_error":false,"permission_denials":[
+  {"tool_name":"Bash","tool_input":{"command":"gh pr comment 7 --body '## AI Review SECRET-A'"}},
+  {"tool_name":"Bash","tool_input":{"command":"cat > /tmp/r.md <<'EOF' SECRET-B"}},
+  {"tool_name":"Bash","tool_input":{"command":"echo $(cat SECRET-C)"}},
+  {"tool_name":"Grep","tool_input":{"pattern":"needle"}}]}]
+J
+out="$(run "$tmp/payload.json")"
+has   "payload: command kept"          "$out" "Bash: gh pr comment 7 --body"
+has   "payload: heredoc cut"           "$out" "Bash: cat > /tmp/r.md"
+has   "payload: substitution cut"      "$out" "Bash: echo"
+has   "payload: non-Bash tool kept"    "$out" "Grep: needle"
+lacks "payload: quoted body hidden"    "$out" "SECRET-A"
+lacks "payload: heredoc body hidden"   "$out" "SECRET-B"
+lacks "payload: substitution hidden"   "$out" "SECRET-C"
 
 echo "   show-claude-error: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

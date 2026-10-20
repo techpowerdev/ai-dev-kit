@@ -15,6 +15,7 @@ check() {
   if [[ "$got" == "$2" ]]; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ $1: expected $2, got $got"; sed 's/^/       /' "$d/out"; fi
 }
 bot='"user":{"login":"claude[bot]","type":"Bot"}'
+otherbot='"user":{"login":"github-actions[bot]","type":"Bot"}'
 human='"user":{"login":"someone","type":"User"}'
 
 check "bot review comment after start"    pass "[{$bot,\"created_at\":\"2026-10-20T08:50:04Z\",\"body\":\"## AI Review: PR #8\"}]" '[]'
@@ -23,6 +24,8 @@ check "no comments at all"                fail '[]' '[]'
 check "human comment does not count"      fail "[{$human,\"created_at\":\"2026-10-20T08:50:04Z\",\"body\":\"## AI Review looks fine\"}]" '[]'
 check "bot comment without the marker"    fail "[{$bot,\"created_at\":\"2026-10-20T08:50:04Z\",\"body\":\"Claude is working…\"}]" '[]'
 check "old review from an earlier run"    fail "[{$bot,\"created_at\":\"2026-10-20T07:00:00Z\",\"body\":\"## AI Review\"}]" '[]'
+check "another bot does not count"      fail "[{$otherbot,\"created_at\":\"2026-10-20T08:50:04Z\",\"body\":\"## AI Review\"}]" '[]'
+check "leading whitespace and CRLF ok"    pass "[{$bot,\"created_at\":\"2026-10-20T08:50:04Z\",\"body\":\" \\r\\n## AI Review\"}]" '[]'
 check "paginated: match on page 2"        pass "[{$human,\"created_at\":\"2026-10-20T08:10:00Z\",\"body\":\"hi\"}][{$bot,\"created_at\":\"2026-10-20T08:20:00Z\",\"body\":\"## AI Review\"}]" '[]'
 
 echo "   check-review-posted: $pass passed, $fail failed"

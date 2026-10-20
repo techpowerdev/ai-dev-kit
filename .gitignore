@@ -24,6 +24,7 @@ blob-report/
 
 # Local tooling
 .claude/settings.local.json
+.ai-review.md
 .DS_Store
 *.log
 npm-debug.log*
