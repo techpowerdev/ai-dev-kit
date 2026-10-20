@@ -3,6 +3,8 @@ description: "Build an approved plan and open a PR. Usage: /implement <issue-num
 argument-hint: <issue-number>
 ---
 
+> **Run every delegation in the foreground and wait for its result** before the next step (never `run_in_background`). In GitHub Actions the run ends the moment you stop, which kills background agents and loses their work. Do not end your turn until every step below, including posting comments or opening the PR, is done.
+
 1. Confirm the issue has `approved:spec` (and `approved:plan` if risk:high). If not, stop and say what is missing.
 2. Create branch `ai/$ARGUMENTS-<slug>` from latest `main`.
 3. Delegate to **implementer** to build the plan step by step.

@@ -3,6 +3,8 @@ description: "Gate 1 prep — turn an issue into a spec for human approval. Usag
 argument-hint: <issue-number>
 ---
 
+> **Run every delegation in the foreground and wait for its result** before the next step (never `run_in_background`). In GitHub Actions the run ends the moment you stop, which kills background agents and loses their work. Do not end your turn until every step below, including posting comments or opening the PR, is done.
+
 1. Read issue #$ARGUMENTS with `gh issue view $ARGUMENTS --comments`.
 2. Delegate to the **product-analyst** agent to write the spec.
 3. Save it to `docs/specs/$ARGUMENTS-<slug>.md`.

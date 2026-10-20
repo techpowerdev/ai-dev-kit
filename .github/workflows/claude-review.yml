@@ -21,6 +21,8 @@ jobs:
       # Lets the job skip cleanly (with a warning) instead of failing when no Claude credential is set yet.
       HAS_CLAUDE_AUTH: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
+      - name: Record start time
+        run: echo "REVIEW_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
       - if: env.HAS_CLAUDE_AUTH != 'true'
         run: echo "::warning::No Claude credential — skipping AI review. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (see README-AI-SETUP.md)."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,3 +47,20 @@ jobs:
         env:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
         run: bash scripts/show-claude-error.sh "$EXEC_FILE"
+      - name: Check the review was posted
+        # A run can end "successfully" without posting (e.g. Claude stopped while
+        # subagents were still running in the background). Fail loudly instead.
+        if: steps.claude.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          posted=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq "[.[] | select(.created_at >= \"$REVIEW_STARTED_AT\")] | length" | awk '{s+=$1} END {print s+0}')
+          reviews=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" --paginate \
+            --jq "[.[] | select(.submitted_at >= \"$REVIEW_STARTED_AT\")] | length" | awk '{s+=$1} END {print s+0}')
+          if (( posted + reviews == 0 )); then
+            echo "::error title=AI review not posted::Claude finished but posted no comment or review on PR #$PR_NUMBER."
+            exit 1
+          fi
+          echo "AI review posted ($posted comment(s), $reviews review(s))."

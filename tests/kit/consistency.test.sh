@@ -30,6 +30,14 @@ while read -r a; do
 done < <(grep -rhoE --include='*.yml' '[Uu]se the [a-z-]+ agent' .github/workflows | awk '{print $3}' | sort -u)
 
 # --- Slash commands --------------------------------------------------------------
+# Commands that delegate must tell Claude to wait for subagents; in CI a background
+# agent is killed when the main turn ends and its work is silently lost.
+for f in .claude/commands/*.md; do
+  if grep -qE '\*\*[a-z-]+-?[a-z]*\*\*' "$f" && grep -qiE 'delegate' "$f"; then
+    expect "$f delegates but does not require foreground subagents" grep -q 'Run every delegation in the foreground' "$f"
+  fi
+done
+expect "claude-review.yml fails when no review was posted" grep -q 'title=AI review not posted' .github/workflows/claude-review.yml
 while read -r c; do
   expect "a workflow runs missing command '/$c'" test -f ".claude/commands/$c.md"
 done < <(grep -rhoE --include='*.yml' 'prompt: "/[a-z-]+' .github/workflows | sed 's|.*/||' | sort -u)
