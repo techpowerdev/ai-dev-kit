@@ -1,0 +1,15 @@
+{
+  "name": "ai-dev-kit",
+  "private": true,
+  "description": "Self-tests for the AI dev kit itself. Do NOT copy this file into your project; see README-AI-SETUP.md.",
+  "packageManager": "pnpm@10.17.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lint": "bash tests/kit/lint.sh",
+    "typecheck": "bash tests/kit/typecheck.sh",
+    "test": "bash tests/kit/run.sh",
+    "build": "node -e \"console.log('ai-dev-kit: nothing to build')\""
+  }
+}

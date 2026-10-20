@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Fake gh for setup-github.test.sh. Never talks to GitHub.
+# Records every call that sends a JSON body as two lines in $FAKE_GH_LOG: the args, then the body.
+# FAKE_HAS_PKG=1 makes "contents/package.json" exist on the default branch.
+set -euo pipefail
+args="$*"
+case "$args" in
+  *contents/package.json*) [[ "${FAKE_HAS_PKG:-0}" == 1 ]]; exit ;;
+  *users/*) echo 12345; exit 0 ;;
+esac
+if [[ "$args" == *"--input -"* ]]; then
+  body="$(cat)"
+  printf '%s\n' "$args" >>"$FAKE_GH_LOG"
+  printf '%s' "$body" | jq -c . >>"$FAKE_GH_LOG"   # fails the call if the body is not valid JSON
+fi

@@ -17,10 +17,16 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Lets the job skip cleanly (with a warning) instead of failing when the key is not set yet.
+      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
+      - if: env.HAS_ANTHROPIC_KEY != 'true'
+        run: echo "::warning::ANTHROPIC_API_KEY is not set — skipping AI review. Add it with gh secret set ANTHROPIC_API_KEY."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
-      - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+      - if: env.HAS_ANTHROPIC_KEY == 'true'
+        uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: "/review ${{ inputs.pr_number }}"

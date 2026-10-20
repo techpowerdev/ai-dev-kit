@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Usage: scripts/deploy.sh <preview|staging|production> <ref-or-name>
 # Contract: must write "url=<deployed-url>" to $GITHUB_OUTPUT.
+# The placeholder below also writes "configured=false" so workflows skip smoke tests,
+# AI QA and production instead of testing a fake URL. Delete that line in your
+# implementation (anything other than "false" counts as a real deploy).
 #
 # TODO: replace the body with your host's CLI. Examples:
 #   Vercel  : url=$(npx vercel deploy --prebuilt --token "$DEPLOY_TOKEN" ${PROD_FLAG})
@@ -25,3 +28,4 @@ esac
 
 echo "::warning::scripts/deploy.sh is a placeholder — implement it for your hosting provider."
 echo "url=$URL" >> "${GITHUB_OUTPUT:-/dev/stdout}"
+echo "configured=false" >> "${GITHUB_OUTPUT:-/dev/stdout}"   # ← remove when implemented
