@@ -84,14 +84,15 @@ README-AI-SETUP.md                ไฟล์นี้
 .github/
   ISSUE_TEMPLATE/                 feature, bug
   pull_request_template.md
-  CODEOWNERS · labeler.yml
+  CODEOWNERS · labeler.yml · dependabot.yml (อัปเดต SHA ของ actions)
   workflows/
-    ci.yml                        lint/typecheck/test/build/e2e/audit
+    ci.yml                        lint/typecheck/test/build/e2e → แล้วค่อยเรียก AI review + preview
     ai-pipeline.yml               issue label → spec → plan → build → PR
-    claude-review.yml             AI review ทุก PR
+    claude-review.yml             AI review (เรียกจาก ci.yml หลัง checks ผ่าน)
     claude.yml                    @claude ใน comment
     risk-label.yml                ติด risk:high อัตโนมัติ
-    preview.yml                   preview deploy + AI QA
+    preview.yml                   preview deploy + AI QA (เรียกจาก ci.yml หลัง checks ผ่าน)
+    audit.yml                     pnpm audit: PR ที่แตะ dependency + ทุกสัปดาห์ (ไม่ใช่ required check)
     deploy.yml                    staging → 👤 approve → production → AI report
 docs/
   ai-workflow.md                  คู่มือการทำงาน + gates

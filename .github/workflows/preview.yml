@@ -1,26 +1,20 @@
 # Gate 3 support: deploy every PR to a preview URL, then let the QA agent test it
 # and post a report telling the human which 3 flows to try.
+#
+# Called from ci.yml only after lint · typecheck · test · build passes, so a broken PR
+# is never deployed or QA'd. ci.yml's concurrency group cancels an in-flight run when a
+# new commit is pushed. Permissions are granted by the caller job.
 name: Preview + AI QA
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-
-concurrency:
-  group: preview-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-  id-token: write
-  deployments: write
-  actions: read
+  workflow_call:
+    inputs:
+      pr_number:
+        type: number
+        required: true
 
 jobs:
   deploy-preview:
-    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     environment:
       name: preview
@@ -36,7 +30,7 @@ jobs:
       # TODO: implement scripts/deploy.sh for your host (Vercel / Railway / Render / Fly / k8s ...)
       # It must print "url=<preview-url>" to $GITHUB_OUTPUT.
       - id: deploy
-        run: ./scripts/deploy.sh preview "pr-${{ github.event.pull_request.number }}"
+        run: ./scripts/deploy.sh preview "pr-${{ inputs.pr_number }}"
         env:
           DEPLOY_TOKEN: ${{ secrets.PREVIEW_DEPLOY_TOKEN }}
 
@@ -56,7 +50,7 @@ jobs:
           BASE_URL: ${{ needs.deploy-preview.outputs.url }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          prompt: "/qa ${{ github.event.pull_request.number }} ${{ needs.deploy-preview.outputs.url }}"
+          prompt: "/qa ${{ inputs.pr_number }} ${{ needs.deploy-preview.outputs.url }}"
           claude_args: >-
             --max-turns 40
             --allowedTools "Read,Write,Glob,Grep,Task,Agent,Bash(pnpm test:e2e:*),Bash(pnpm exec playwright:*),Bash(gh pr view:*),Bash(gh pr comment:*)"
