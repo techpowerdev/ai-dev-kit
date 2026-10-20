@@ -29,7 +29,7 @@ env:
     Read,Write,Edit,Glob,Grep,Task,Agent,
     Bash(gh issue:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh label:*),
     Bash(git checkout:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin ai/*),Bash(git push -u origin ai/*),
-    Bash(git diff:*),Bash(git log:*),Bash(git status:*),
+    Bash(git diff:*),Bash(git log:*),Bash(git status:*),Bash(git fetch:*),Bash(git branch:*),Bash(git rev-parse:*),
     Bash(pnpm install:*),Bash(pnpm lint:*),Bash(pnpm typecheck:*),Bash(pnpm test:*),Bash(pnpm build:*)
 
 jobs:
@@ -39,10 +39,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Record start time
+        run: echo "PIPELINE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
       - name: Snapshot CI helpers
         # Copied before Claude runs, so Claude's file edits cannot change the scripts that
         # later steps run. (Code Claude may run, e.g. pnpm test, is not covered by this.)
-        run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh "$RUNNER_TEMP/"
+        run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh scripts/check-pipeline-result.sh "$RUNNER_TEMP/"
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         id: claude
         env:
@@ -65,6 +67,17 @@ jobs:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
           CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
         run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE" "$CLAUDE_OUTCOME"
+      - name: Check the run produced a result
+        # Unpushed work is deleted with the runner, so a "successful" run can leave
+        # nothing behind. Fail, and say so on the issue, unless the bot commented or
+        # a PR from ai/<issue>-* was opened or updated during this run.
+        if: always() && steps.claude.outcome != 'skipped' && steps.claude.outcome != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REVIEW_BOT: ${{ vars.AI_REVIEW_BOT || 'claude[bot]' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash "$RUNNER_TEMP/check-pipeline-result.sh" "$ISSUE_NUMBER" "$PIPELINE_STARTED_AT"
 
   plan-and-build:
     if: github.event.label.name == 'approved:spec' && github.event.sender.type != 'Bot'
@@ -89,10 +102,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - name: Record start time
+        run: echo "PIPELINE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
       - name: Snapshot CI helpers
         # Copied before Claude runs, so Claude's file edits cannot change the scripts that
         # later steps run. (Code Claude may run, e.g. pnpm test, is not covered by this.)
-        run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh "$RUNNER_TEMP/"
+        run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh scripts/check-pipeline-result.sh "$RUNNER_TEMP/"
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         id: claude
         env:
@@ -115,6 +130,17 @@ jobs:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
           CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
         run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE" "$CLAUDE_OUTCOME"
+      - name: Check the run produced a result
+        # Unpushed work is deleted with the runner, so a "successful" run can leave
+        # nothing behind. Fail, and say so on the issue, unless the bot commented or
+        # a PR from ai/<issue>-* was opened or updated during this run.
+        if: always() && steps.claude.outcome != 'skipped' && steps.claude.outcome != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REVIEW_BOT: ${{ vars.AI_REVIEW_BOT || 'claude[bot]' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash "$RUNNER_TEMP/check-pipeline-result.sh" "$ISSUE_NUMBER" "$PIPELINE_STARTED_AT"
 
   build-high-risk:
     if: github.event.label.name == 'approved:plan' && github.event.sender.type != 'Bot'
@@ -139,10 +165,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - name: Record start time
+        run: echo "PIPELINE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
       - name: Snapshot CI helpers
         # Copied before Claude runs, so Claude's file edits cannot change the scripts that
         # later steps run. (Code Claude may run, e.g. pnpm test, is not covered by this.)
-        run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh "$RUNNER_TEMP/"
+        run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh scripts/check-pipeline-result.sh "$RUNNER_TEMP/"
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
         id: claude
         env:
@@ -165,3 +193,14 @@ jobs:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
           CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
         run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE" "$CLAUDE_OUTCOME"
+      - name: Check the run produced a result
+        # Unpushed work is deleted with the runner, so a "successful" run can leave
+        # nothing behind. Fail, and say so on the issue, unless the bot commented or
+        # a PR from ai/<issue>-* was opened or updated during this run.
+        if: always() && steps.claude.outcome != 'skipped' && steps.claude.outcome != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REVIEW_BOT: ${{ vars.AI_REVIEW_BOT || 'claude[bot]' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash "$RUNNER_TEMP/check-pipeline-result.sh" "$ISSUE_NUMBER" "$PIPELINE_STARTED_AT"

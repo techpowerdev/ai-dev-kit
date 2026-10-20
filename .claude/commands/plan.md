@@ -5,9 +5,10 @@ argument-hint: <issue-number>
 
 > **Run every delegation in the foreground and wait for its result** before the next step (never `run_in_background`). In GitHub Actions the run ends the moment you stop, which kills background agents and loses their work. Do not end your turn until every step below, including posting comments or opening the PR, is done. Run each shell command on its own, without `;`, `&&`, pipes or redirects: CI only allows the single commands listed for the job, so compound commands are denied.
 
-1. Read issue #$ARGUMENTS and its approved spec in `docs/specs/`.
-2. Delegate to the **architect** agent to write the plan; save to `docs/plans/$ARGUMENTS-<slug>.md`.
-3. If risk is **high**: post the plan on the issue with
+1. Read issue #$ARGUMENTS with `gh issue view $ARGUMENTS --comments`: the approved spec is the bot's `# Spec:` comment, and the human's answers to its open questions are in later comments. The spec is not in the repo yet.
+2. Delegate to the **architect** agent to write the plan. Split it into numbered steps that are each one commit of about 400 changed lines or less, so `/implement` can push and resume step by step. Mark any step that changes `.claude/**` as **needs a human** (CI cannot edit those files).
+3. Post the plan as a comment on the issue, whatever the risk level. `/implement` reads it from there, and a later run uses it to resume.
+4. If risk is **high**: end that comment with
    > 👤 **Human gate 1b:** แผนนี้แตะส่วนเสี่ยงสูง กรุณาอนุมัติด้วย label `approved:plan`
    and stop.
-4. If risk is low/medium: continue to `/implement $ARGUMENTS`.
+5. If risk is low/medium: continue to `/implement $ARGUMENTS`.

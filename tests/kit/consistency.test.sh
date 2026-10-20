@@ -45,6 +45,16 @@ for f in .claude/commands/*.md; do
     expect "$f tells Claude to run shell commands one at a time" grep -q 'Run each shell command on its own' "$f"
   fi
 done
+# AI pipeline: every job checks it produced something, and /implement pushes step by step.
+pipeline_claude="$(grep -c 'anthropics/claude-code-action@' .github/workflows/ai-pipeline.yml)"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+pipeline_checks="$(grep -c 'check-pipeline-result.sh" "$ISSUE_NUMBER"' .github/workflows/ai-pipeline.yml || true)"
+expect "every ai-pipeline Claude job checks it produced a result ($pipeline_checks of $pipeline_claude)" test "$pipeline_checks" -eq "$pipeline_claude"
+expect "/implement pushes after every plan step" grep -q 'then push right away' .claude/commands/implement.md
+expect "/implement resumes from an existing ai/<n>-* branch" grep -q 'continue from it' .claude/commands/implement.md
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "/implement runs tests through pnpm only" grep -q 'Use these `pnpm` scripts only' .claude/commands/implement.md
+expect "/plan always posts the plan on the issue" grep -q 'whatever the risk level' .claude/commands/plan.md
 expect "claude-review.yml checks that the review was posted" grep -q 'check-review-posted.sh' .github/workflows/claude-review.yml
 # shellcheck disable=SC2016  # backticks here are literal Markdown, not command substitution
 expect "/review posts the comment from a file, not inline --body" grep -q -- '--body-file .ai-review.md' .claude/commands/review.md
