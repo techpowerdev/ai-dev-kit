@@ -49,13 +49,24 @@ ai_output() {
 }
 
 # ai_high_risk_globs <labeler.yml> — the globs listed under "risk:high", one per line.
+# Accepts "quoted", 'single-quoted' and bare list items; skips the "changed-files:" and
+# "any-glob-to-any-file:" keys (they end with a colon).
 ai_high_risk_globs() {
   awk '
-    /^"risk:high":/ { inblock = 1; next }
+    /^["\x27]?risk:high["\x27]?:/ { inblock = 1; next }
     /^[^[:space:]#]/ { inblock = 0 }
-    inblock && /^[[:space:]]*-[[:space:]]*"/ {
-      line = $0; sub(/^[^"]*"/, "", line); sub(/".*$/, "", line); print line
+    inblock && /^[[:space:]]*-[[:space:]]*[^[:space:]]/ {
+      line = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", line); sub(/[[:space:]]+#.*$/, "", line); sub(/[[:space:]]+$/, "", line)
+      if (line ~ /:$/) next
+      if (line ~ /^".*"$/ || line ~ /^\x27.*\x27$/) line = substr(line, 2, length(line) - 2)
+      if (line != "") print line
     }' "$1"
+}
+
+# ai_redact_userinfo <text> — hide "user:secret@" in any URL inside the text.
+ai_redact_userinfo() {
+  printf '%s' "$1" | sed -E 's#(://)[^/@[:space:]]+@#\1***@#g'
 }
 
 # ai_path_matches <path> <glob> — labeler-style match: "**" spans directories and a

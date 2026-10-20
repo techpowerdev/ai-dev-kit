@@ -36,6 +36,7 @@ done
 [[ "$mode" =~ ^(pipeline|pr|none)$ && -n "$base" && -n "$out" ]] || { echo "usage: see header" >&2; exit 2; }
 [[ "$mode" == pr || "$mode" == none || "$issue" =~ ^[0-9]+$ ]] || { echo "--issue must be a number" >&2; exit 2; }
 mkdir -p "$out"
+out="$(cd "$out" && pwd)"   # absolute: the script changes directory to the repo next
 cd "$repo"
 
 write() { printf '%s\n' "$2" >"$out/$1"; }

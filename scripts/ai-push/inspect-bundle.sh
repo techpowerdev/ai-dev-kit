@@ -31,11 +31,21 @@ done
 [[ "$mode" =~ ^(pipeline|pr|none)$ && "$number" =~ ^[0-9]+$ && -n "$base" && -n "$in" ]] || { echo "usage: see header" >&2; exit 2; }
 [[ "$base" =~ ^[0-9a-f]{40}$ ]] || ai_fail "base must be a full commit SHA"
 [[ "$mode" != pr || -n "$expected" ]] || ai_fail "--expected-branch is required in pr mode"
+# Absolute paths: the script changes directory to the repo below.
+abs() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s/%s' "$PWD" "$1" ;; esac; }
+in="$(abs "$in")"
+[[ -n "$labeler" ]] && labeler="$(abs "$labeler")"
+# Before git 2.46, fetch.fsckObjects does not check objects that come from a bundle.
+git_version="$(git version | awk '{print $3}')"
+if [[ "$(printf '%s\n2.46.0\n' "$git_version" | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)" != "2.46.0" ]]; then
+  ai_fail "git $git_version is too old: 2.46 or newer is needed to fsck objects from a bundle."
+fi
 if [[ -n "$labeler" ]]; then
   [[ -f "$labeler" ]] || ai_fail "Labeler file $labeler not found: cannot decide whether the change is high risk."
   [[ -n "$(ai_high_risk_globs "$labeler")" ]] || ai_fail "No risk:high globs in $labeler: cannot decide whether the change is high risk."
 fi
 cd "$repo"
+[[ -f "$in/status" && ! -L "$in/status" ]] || ai_fail "No status file in the artifact ($in): it may not have been downloaded. Not treating that as 'nothing to push'."
 
 nothing() { echo "nothing to push"; ai_output commits 0; exit 0; }
 first_line() { head -n 1 "$1" 2>/dev/null | tr -d '\r' || true; }
@@ -47,7 +57,7 @@ if [[ "$mode" == none && "$status" != none && "$status" != empty && -n "$status"
   ai_fail "This run may not push, but the artifact says '$status'."
 fi
 case "$status" in
-  ""|empty)
+  empty)
     (( ${claimed:-0} == 0 )) || ai_fail "The artifact says 'empty' but counts ${claimed} commit(s): make-bundle.sh did not finish."
     nothing ;;
   failed) ai_fail "make-bundle.sh failed in the Claude job; see that job's log." ;;
@@ -84,6 +94,10 @@ tip="$(ai_git rev-parse --verify 'refs/ai-incoming/head^{commit}')"
 
 # 5. history: the base is in the new history, and the base is something we trust
 ai_git merge-base --is-ancestor "$base" "$tip" || ai_fail "The commits do not build on the base commit."
+if [[ "$mode" == pr ]]; then
+  pr_head="$(ai_git rev-parse --verify --quiet "refs/remotes/origin/$expected^{commit}" || true)"
+  [[ -n "$pr_head" && "$base" == "$pr_head" ]] || ai_fail "In pr mode the base must be the current head of origin/$expected (${pr_head:-not found})."
+fi
 if [[ "$mode" == pipeline ]]; then
   resume_tip="$(ai_git rev-parse --verify --quiet "refs/remotes/origin/$branch^{commit}" || true)"
   if ! ai_git merge-base --is-ancestor "$base" "refs/remotes/origin/$default_branch" 2>/dev/null \
@@ -105,11 +119,13 @@ changed="$(ai_git -c core.quotePath=false diff --no-renames --name-only -z "$bas
 scratch="$(printf '%s\n' "$changed" | grep -E '(^|/)\.ai-(pr-body|comment|review)\.md$' || true)"
 [[ -z "$scratch" ]] || ai_fail "AI scratch files were committed: $(printf '%s' "$scratch" | tr '\n' ' ')"
 workflows="$(printf '%s\n' "$changed" | grep -c '^\.github/workflows/' || true)"
-if (( workflows > 0 )); then
-  ai_warn "This push changes $workflows file(s) under .github/workflows/: $(printf '%s\n' "$changed" | grep '^\.github/workflows/' | head -20 | tr '\n' ' ')"
+github_files="$(printf '%s\n' "$changed" | grep '^\.github/' || true)"
+if [[ -n "$github_files" ]]; then
+  ai_warn "This push changes files under .github/ ($workflows workflow file(s)): $(printf '%s\n' "$github_files" | head -20 | tr '\n' ' ')"
 fi
 high_risk=false; risky=""
-if [[ -n "$labeler" && -f "$labeler" ]]; then
+if [[ -n "$labeler" ]]; then
+  [[ -f "$labeler" ]] || ai_fail "Labeler file $labeler disappeared."
   globs="$(ai_high_risk_globs "$labeler")"
   while IFS= read -r p; do
     [[ -z "$p" ]] && continue
@@ -118,7 +134,8 @@ if [[ -n "$labeler" && -f "$labeler" ]]; then
       if ai_path_matches "$p" "$g"; then risky="$risky $p"; break; fi
     done <<<"$globs"
   done <<<"$changed"
-  if [[ -n "$risky" ]]; then high_risk=true; ai_warn "High-risk paths changed:$(printf '%s' "$risky" | cut -c1-500)"; fi
+  [[ -z "$github_files" ]] || risky="$risky $(printf '%s' "$github_files" | tr '\n' ' ')"
+  if [[ -n "${risky// /}" ]]; then high_risk=true; ai_warn "High-risk paths changed:$(printf '%s' "$risky" | cut -c1-500)"; fi
 fi
 
 # 8. uncommitted work is reported, never pushed (decision 6)

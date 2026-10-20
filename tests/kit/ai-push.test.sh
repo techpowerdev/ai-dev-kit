@@ -14,7 +14,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 mkdir -p "$HOME"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-unset RUNNER_TEMP GITHUB_OUTPUT PUSH_TOKEN GIT_CONFIG_COUNT 2>/dev/null || true
+unset RUNNER_TEMP GITHUB_OUTPUT PUSH_TOKEN GIT_CONFIG_COUNT GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK 2>/dev/null || true
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); }
@@ -61,6 +61,12 @@ if ai_validate_branch ai/13-x 12; then bad "branch for another issue accepted"; 
 s="$(ai_sanitize "$(printf 'a\r::error::b\nc%%d\001')")"
 if [[ "$s" != *"::"* && "$s" != *$'\n'* && "$s" == *"%25"* ]]; then ok; else bad "ai_sanitize: '$s'"; fi
 hr="$(ai_high_risk_globs .github/labeler.yml)"
+raw_items="$(sed -n '/^"risk:high":/,/^[^[:space:]]/p' .github/labeler.yml | grep -cE '^[[:space:]]*-[[:space:]]*"')"
+[[ "$(printf '%s\n' "$hr" | grep -c .)" -eq "$raw_items" && "$raw_items" -ge 12 ]] && ok || bad "every risk:high glob is read ($raw_items listed)"
+printf '"risk:high":\n  - changed-files:\n      - any-glob-to-any-file:\n          - bare/**\n          - \x27single/**\x27\n          - "dq/**"  # note\n' >"$tmp/lb.yml"
+[[ "$(ai_high_risk_globs "$tmp/lb.yml" | tr '\n' ' ')" == "bare/** single/** dq/** " ]] && ok || bad "bare, single- and double-quoted globs are read"
+r="$(ai_redact_userinfo 'url.https://x-access-token:ghs_abc@github.com/.insteadof')"
+[[ "$r" != *ghs_abc* && "$r" == *"***@github.com"* ]] && ok || bad "user info is redacted: $r"
 if grep -qx '\*\*/payment\*/\*\*' <<<"$hr"; then ok; else bad "risk:high globs not read from labeler.yml"; fi
 for p in apps/api/payment/a.ts payments/x.ts src/checkout/y.ts .github/workflows/ci.yml CLAUDE.md scripts/deploy.sh; do
   m=false; while IFS= read -r gl; do ai_path_matches "$p" "$gl" && { m=true; break; }; done <<<"$hr"
@@ -90,7 +96,16 @@ if grep -q TOKEN "$tmp/last.out"; then bad "the token in the URL was printed"; e
 g "$W/claude" remote set-url origin "$W/origin.git"
 g "$W/claude" config "url.https://x-access-token:T@github.com/.insteadOf" "https://github.com/"
 expect_fail "a url.*.insteadOf rewrite is detected" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+if grep -q 'x-access-token:T@' "$tmp/last.out"; then bad "the secret in a url.* key name was printed"; else ok; fi
 g "$W/claude" config --unset "url.https://x-access-token:T@github.com/.insteadOf"
+g "$W/claude" config include.path /tmp/whatever
+expect_fail "an unconditional include.path is detected" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+g "$W/claude" config --unset include.path
+expect_fail "SSH_AUTH_SOCK is detected" env SSH_AUTH_SOCK=/tmp/agent bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+expect_fail "GIT_ASKPASS is detected" env GIT_ASKPASS=/bin/echo bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+g "$W/claude" remote set-url origin git@github.com:o/r.git
+expect_fail "an ssh remote is detected" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+g "$W/claude" remote set-url origin "$W/origin.git"
 mkdir -p "$W/rt"; : >"$W/rt/git-credentials-abc.config"
 expect_fail "credentials file in RUNNER_TEMP is detected" env RUNNER_TEMP="$W/rt" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
 
@@ -303,6 +318,35 @@ expect_fail "make-bundle that cannot write the bundle" bundle --mode pipeline --
 [[ "$(cat "$OUT/status")" == failed ]] && ok || bad "a crash leaves status failed ($(cat "$OUT/status"))"
 rmdir "$OUT/ai.bundle"; trusted
 expect_fail "inspect stops on status failed" inspect --mode pipeline --number 12
+
+# ---------------------------------------------------------------- review round 3
+# a relative labeler path still finds the file after the script changes directory
+world; claude_commit ai/12-pay apps/api/payment/charge.ts
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect with a relative --labeler path" inspect --mode pipeline --number 12 --labeler .github/labeler.yml
+[[ "$(outv high_risk)" == true ]] && ok || bad "relative labeler path still flags high risk"
+# relative --in and --out
+( cd "$W" && bash "$S/make-bundle.sh" --repo claude --out rel-out --base "$BASE" --mode pipeline --issue 12 >/dev/null )
+[[ -f "$W/rel-out/ai.bundle" && ! -e "$W/claude/rel-out" ]] && ok || bad "a relative --out lands next to the caller, not in Claude's checkout"
+# a missing status file is a failure, not "nothing to push"
+rm -f "$OUT/status"
+expect_fail "missing status file fails" inspect --mode pipeline --number 12
+# any .github/ change is high risk (not only workflows)
+world; claude_commit ai/12-gh .github/dependabot.yml
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect a .github/ change" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv high_risk)" == true ]] && ok || bad ".github/dependabot.yml counts as high risk"
+# pipeline: a base that is neither on main nor the tip of origin/<branch>
+world; g "$W/claude" checkout -q -b side; echo s >"$W/claude/s.txt"; g "$W/claude" add -A; g "$W/claude" commit -qm side
+SIDE="$(g "$W/claude" rev-parse HEAD)"; g "$W/claude" push -q origin side
+g "$W/claude" checkout -q -b ai/12-x; echo y >"$W/claude/y.txt"; g "$W/claude" add -A; g "$W/claude" commit -qm y
+BASE="$SIDE"; bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_fail "pipeline: a base that is not on main or the remote tip is refused" inspect --mode pipeline --number 12
+# pr: the base must be the PR head on origin
+world; claude_commit ai/12-x f1; g "$W/claude" push -q origin ai/12-x
+HEAD0="$(remote_sha ai/12-x)"; claude_commit ai/12-x f2; claude_commit ai/12-x f3
+BASE="$(g "$W/claude" rev-parse HEAD~1)"; bundle --mode pr --issue 12 --branch ai/12-x >/dev/null; trusted
+expect_fail "pr: a base that is not the PR head is refused" inspect --mode pr --number 5 --expected-branch ai/12-x
 
 # ---------------------------------------------------------------- static: pushes never force or widen
 push_lines="$(grep -hE '(^|[[:space:]])(ai_git|git)[[:space:]](.*[[:space:]])?push([[:space:]]|$)' "$S"/*.sh | grep -vE '^[[:space:]]*#' || true)"
