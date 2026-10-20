@@ -45,8 +45,3 @@ jobs:
         env:
           EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
         run: bash scripts/show-claude-error.sh "$EXEC_FILE"
-      - name: "TEMP: trace Claude run"
-        if: always() && steps.claude.outcome == 'success'
-        env:
-          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
-        run: bash scripts/trace-claude-run.sh "$EXEC_FILE"
