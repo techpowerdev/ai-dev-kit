@@ -33,7 +33,13 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - name: Snapshot CI helpers
+        # Copied before Claude runs, so Claude cannot change the scripts that later steps run.
+        run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh "$RUNNER_TEMP/"
       - uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+        id: claude
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"   # subagents must finish before the run ends; in CI the process exits with the main turn
         with:
           # Either secret works: a Console API key (billed per token) or a Claude
           # subscription token from `claude setup-token` (Pro/Max/Team/Enterprise).
@@ -43,3 +49,10 @@ jobs:
           claude_args: >-
             --max-turns 40
             --allowedTools "Read,Write,Edit,Glob,Grep,Task,Agent,Bash(git add:*),Bash(git commit:*),Bash(git push origin ai/*),Bash(git diff:*),Bash(git log:*),Bash(git status:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(pnpm lint:*),Bash(pnpm typecheck:*),Bash(pnpm test:*),Bash(pnpm build:*)"
+      - name: Show Claude errors and denied tools
+        # claude-code-action hides Claude's output; this prints only errors and denied
+        # tool calls (a denied tool can make a "successful" run silently do nothing).
+        if: always() && (steps.claude.outcome == 'success' || steps.claude.outcome == 'failure')
+        env:
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE"
