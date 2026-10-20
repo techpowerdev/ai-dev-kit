@@ -21,12 +21,20 @@ jobs:
       # Lets the job skip cleanly (with a warning) instead of failing when no Claude credential is set yet.
       HAS_CLAUDE_AUTH: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
+      - name: Record start time
+        run: echo "REVIEW_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
       - if: env.HAS_CLAUDE_AUTH != 'true'
         run: echo "::warning::No Claude credential — skipping AI review. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN (see README-AI-SETUP.md)."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
+      - name: Snapshot CI helpers
+        # Copied before Claude runs, so Claude cannot change the scripts that later steps run.
+        run: cp scripts/show-claude-error.sh scripts/check-review-posted.sh "$RUNNER_TEMP/"
       - if: env.HAS_CLAUDE_AUTH == 'true'
+        id: claude
         uses: anthropics/claude-code-action@db77d4d3c98f3f6380e7cd45ffba2342a3dbde3c # v1.0.254
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"   # subagents must finish before the run ends; in CI the process exits with the main turn
         with:
           # Either secret works: a Console API key (billed per token) or a Claude
           # subscription token from `claude setup-token` (Pro/Max/Team/Enterprise).
@@ -37,3 +45,18 @@ jobs:
           claude_args: >-
             --max-turns 30
             --allowedTools "Read,Glob,Grep,Task,Agent,Bash(git diff:*),Bash(git log:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr checkout:*)"
+      - name: Show Claude errors and denied tools
+        # claude-code-action hides Claude's output; this prints only errors and denied
+        # tool calls (a denied tool can make a "successful" run silently do nothing).
+        if: always() && (steps.claude.outcome == 'success' || steps.claude.outcome == 'failure')
+        env:
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file || format('{0}/claude-execution-output.json', runner.temp) }}
+        run: bash "$RUNNER_TEMP/show-claude-error.sh" "$EXEC_FILE"
+      - name: Check the review was posted
+        # A run can end "successfully" without posting (e.g. Claude stopped while
+        # subagents were still running in the background). Fail loudly instead.
+        if: steps.claude.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: bash "$RUNNER_TEMP/check-review-posted.sh" "$PR_NUMBER" "$REVIEW_STARTED_AT"

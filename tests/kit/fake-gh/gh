@@ -4,6 +4,13 @@
 # FAKE_HAS_PKG=1 makes "contents/package.json" exist on the default branch.
 set -euo pipefail
 args="$*"
+# check-review-posted.test.sh: serve canned API responses from $FAKE_GH_RESPONSES.
+if [[ -n "${FAKE_GH_RESPONSES:-}" ]]; then
+  case "$args" in
+    *issues/*/comments*) cat "$FAKE_GH_RESPONSES/comments.json"; exit ;;
+    *pulls/*/reviews*)   cat "$FAKE_GH_RESPONSES/reviews.json"; exit ;;
+  esac
+fi
 case "$args" in
   *contents/package.json*) [[ "${FAKE_HAS_PKG:-0}" == 1 ]]; exit ;;
   *users/*) echo 12345; exit 0 ;;
