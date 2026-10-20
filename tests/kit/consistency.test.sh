@@ -99,6 +99,7 @@ for job in spec plan-and-build build-high-risk; do
 done
 hook="$(node -e 'const s=require("./.claude/settings.json");console.log(s.hooks.PreToolUse[0].hooks[0].command)' | awk '{print $NF}')"
 expect "settings.json hook '$hook' exists and is executable" test -x "$hook"
+expect "guard.sh fails closed: unexpected exit codes become a block" grep -q 'rc=2' .claude/hooks/guard.sh
 matcher="$(node -e 'const s=require("./.claude/settings.json");console.log(s.hooks.PreToolUse[0].matcher)')"
 for t in Bash Read Grep Glob Edit Write MultiEdit NotebookEdit; do
   expect "the guard hook runs for $t (matcher: $matcher)" grep -qE "(^|\\|)$t(\\||$)" <<<"$matcher"

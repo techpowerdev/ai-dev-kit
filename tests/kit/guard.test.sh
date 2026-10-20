@@ -108,6 +108,24 @@ allow|Bash|echo {a,b}.md
 allow|Bash|git log --oneline
 allow|Bash|cat .gitignore
 allow|Read|.github/workflows/ci.yml
+# --- #12: token files of actions/checkout v6+, path normalisation, brace limits
+block|Read|/home/runner/work/_temp/git-credentials-1a2b.config
+block|Grep:path|/home/runner/work/_temp
+block|Glob:pattern|/home/runner/work/_temp/*.config
+block|Bash|cat $RUNNER_TEMP/git-credentials-1a2b.config
+block|Bash|cat ${RUNNER_TEMP}/x
+block|Bash|cat git-credentials-1a2b.config
+block|Read|.git//config
+block|Read|./.git/./config
+block|Bash|cat .git//config
+block|Bash|cat /proc/self/task/123/environ
+block|Read|.//.env
+block|Bash|cat {{.e,x},y}nv
+block|Bash|echo {a,b}{c,d}{e,f}{g,h}
+allow|Bash|echo ${HOME}/notes.md
+allow|Bash|echo {a,b}{c,d}.md
+allow|Read|./docs/ai-workflow.md
+allow|Bash|ls apps/web/tmp
 # --- Grep and Glob follow the same rules as Read
 block|Grep:path|.git/config
 block|Grep:path|.git
@@ -174,6 +192,18 @@ if printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' | PATH="$noj
   fail=$((fail+1)); echo "   ✗ hook without jq should block"
 elif [[ $? -eq 2 ]]; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ hook without jq should exit 2"; fi
 rm -rf "$nojq"
+
+# A bug in the checks (here an injected failing command) must block, not allow.
+buggy="$(mktemp)"
+# shellcheck disable=SC2016  # literal hook source text to match, not an expansion
+sed 's/^input="$(cat)"$/input="$(cat)"; false/' .claude/hooks/guard.sh >"$buggy"
+if grep -q '; false$' "$buggy"; then
+  rc=0; printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' | bash "$buggy" >/dev/null 2>&1 || rc=$?
+  if [[ $rc -eq 2 ]]; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ a hook bug should block with exit 2 (got $rc)"; fi
+else
+  fail=$((fail+1)); echo "   ✗ could not inject a bug into the hook for the fail-closed test"
+fi
+rm -f "$buggy"
 
 echo "   guard: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

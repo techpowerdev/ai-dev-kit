@@ -3,9 +3,13 @@
 # Reads the tool call JSON on stdin. Exit code 2 = block and tell Claude why.
 set -euo pipefail
 set -f   # never glob-expand: the hook inspects text, it must not match files on disk
-# Fail closed: an unexpected error (e.g. jq missing) blocks the tool call instead of
-# letting it through. Exit 2 is "block" for Claude Code; exit 1 would mean "allow".
-trap 'echo "BLOCKED by .claude/hooks/guard.sh: hook error on line $LINENO; fix the hook or run the command yourself" >&2; exit 2' ERR
+
+# Fail closed: the checks run in a subshell (see the end of the file). Exit 0 allows,
+# exit 2 blocks, and any other exit (a bug, a missing jq, set -e) is turned into a
+# block. Exit 1 would otherwise mean "allow" to Claude Code.
+main() {
+set -euo pipefail   # set again here: the caller runs main with set +e to read its exit code
+set -f
 command -v jq >/dev/null || { echo "BLOCKED by .claude/hooks/guard.sh: jq is required" >&2; exit 2; }
 
 input="$(cat)"
@@ -28,8 +32,29 @@ is_secret_env_path() {
 # Files that hold credentials even though they are not env files: the git config
 # (actions/checkout and claude-code-action store a token there) and process
 # environments under /proc.
+# Collapses "//" and "/./" and a leading "./", so ".git//config" or "./.git/./config"
+# are checked as ".git/config".
+normalize_path() {
+  # Patterns live in variables: bash 3.2 (macOS) keeps the backslash of "\/" in the
+  # replacement text, so an escaped-slash replacement would turn "a//b" into "a\/b".
+  local p="$1" dbl='//' dot='/./' one='/'
+  while [[ "$p" == *"//"* ]]; do p="${p//$dbl/$one}"; done
+  while [[ "$p" == *"/./"* ]]; do p="${p//$dot/$one}"; done
+  while [[ "$p" == ./* ]]; do p="${p#./}"; done
+  printf '%s' "$p"
+}
+
 is_credential_path() {
-  [[ "$1" =~ (^|/)\.git/config$ || "$1" =~ ^/proc/[^/]+/environ$ ]]
+  local p
+  p="$(normalize_path "$1")"
+  [[ "$p" =~ (^|/)\.git/config$ ]] && return 0
+  [[ "$p" =~ ^/proc/[^/]+(/task/[^/]+)?/environ$ ]] && return 0
+  # actions/checkout v6+ stores the token in $RUNNER_TEMP/git-credentials-*.config
+  [[ "$p" =~ (^|/)git-credentials-[^/]*$ ]] && return 0
+  [[ "$p" =~ ^/home/runner/work/_temp(/|$) ]] && return 0
+  [[ "$p" =~ \$\{?RUNNER_TEMP\}? ]] && return 0
+  [[ -n "${RUNNER_TEMP:-}" && ( "$p" == "$RUNNER_TEMP" || "$p" == "$RUNNER_TEMP"/* ) ]] && return 0
+  return 1
 }
 
 # Expands one level of {a,b} braces per call, up to 3 levels and 64 variants.
@@ -39,7 +64,7 @@ brace_variants() {
   if (( depth < 3 )) && [[ "$w" =~ ^([^{]*)\{([^{}]*)\}(.*)$ ]]; then
     pre="${BASH_REMATCH[1]}"; body="${BASH_REMATCH[2]}"; post="${BASH_REMATCH[3]}"
     local IFS=','
-    for alt in $body; do brace_variants "$pre$alt$post" $((depth + 1)); done | head -64
+    for alt in $body; do brace_variants "$pre$alt$post" $((depth + 1)); done | head -65
   else
     printf '%s\n' "$w"
   fi
@@ -50,8 +75,14 @@ brace_variants() {
 # match a dotfile when the pattern starts with a literal ".", so "*" or "[.]env"
 # alone do not count.
 names_secret() {
-  local v base name
+  local v base name variants
+  variants="$(brace_variants "$1")"
+  # Fail closed: more variants than the cap, or a {a,b} group left unexpanded
+  # (nested or more than 3 groups), counts as a match. ${VAR} has no comma and passes.
+  (( $(printf '%s\n' "$variants" | wc -l) > 64 )) && return 0
+  [[ "$variants" =~ \{[^{}]*,[^{}]*\} ]] && return 0
   while IFS= read -r v; do
+    v="$(normalize_path "$v")"
     is_secret_env_path "$v" && return 0
     is_credential_path "$v" && return 0
     base="${v##*/}"
@@ -61,7 +92,7 @@ names_secret() {
         [[ "$name" == $base ]] && return 0
       done
     fi
-  done < <(brace_variants "$1")
+  done <<<"$variants"
   return 1
 }
 
@@ -151,9 +182,7 @@ if [[ "$tool" == "Bash" ]]; then
       [[ "$f" == "__none__" ]] && continue
       [[ "$f" =~ ^[A-Za-z0-9_.][A-Za-z0-9_./-]*$ ]] \
         || block "in CI, gh pr/issue may only post a plain relative file path (got '${f:-<none>}')"
-      norm="/$f/"
-      while [[ "$norm" == *"/./"* ]]; do norm="${norm//\/.\//\/}"; done
-      while [[ "$norm" == *"//"* ]]; do norm="${norm//\/\//\/}"; done
+      norm="/$(normalize_path "$f")/"
       [[ "$norm" == *"/../"* || "$norm" == *"/.git/"* ]] \
         && block "in CI, gh pr/issue may only post a file inside the repo, outside .git/ (got '$f')"
     done
@@ -164,7 +193,7 @@ if [[ "$tool" == "Bash" ]]; then
 fi
 
 if [[ "$tool" == "Read" ]]; then
-  is_secret_env_path "$path" && block "reading secret file '$path'"
+  is_secret_env_path "$(normalize_path "$path")" && block "reading secret file '$path'"
   is_credential_path "$path" && block "reading a file that holds credentials ('$path')"
 fi
 
@@ -184,3 +213,13 @@ if [[ "$tool" == "Edit" || "$tool" == "Write" || "$tool" == "MultiEdit" || "$too
 fi
 
 exit 0
+}
+
+set +e
+( main )
+rc=$?
+if [[ $rc -ne 0 && $rc -ne 2 ]]; then
+  echo "BLOCKED by .claude/hooks/guard.sh: hook error (exit $rc); fix the hook or run the command yourself" >&2
+  rc=2
+fi
+exit "$rc"
