@@ -393,12 +393,30 @@ if [[ -n "\$name_only" && "\$sub" == "\${FAIL_SUB:-}" ]]; then echo "fatal: inje
 exec "$real_git" "\$@"
 WRAP
 chmod +x "$W/gitwrap/git"
-for sub in diff log; do
-  expect_fail "inspect: a failing git $sub fails closed" env PATH="$W/gitwrap:$PATH" FAIL_SUB="$sub" \
-    GITHUB_OUTPUT="$W/gh_out" bash "$S/inspect-bundle.sh" --repo "$W/trusted" --in "$OUT" --base "$BASE" \
-    --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
-  out_has "it says git $sub failed" "(git $sub failed)"
-done
+expect_fail "inspect: a failing git log fails closed" env PATH="$W/gitwrap:$PATH" FAIL_SUB=log \
+  GITHUB_OUTPUT="$W/gh_out" bash "$S/inspect-bundle.sh" --repo "$W/trusted" --in "$OUT" --base "$BASE" \
+  --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+out_has "it says git log failed" "(git log failed)"
+# merging main in: main's own changes are not the AI's (review of #21)
+world; claude_commit ai/12-m src/app.ts
+g "$W/seed" pull -q "$W/origin.git" main; mkdir -p "$W/seed/.github/workflows" "$W/seed/.claude"
+echo w >"$W/seed/.github/workflows/new.yml"; echo c >"$W/seed/.claude/settings.json"; echo p >"$W/seed/apps-auth.txt"
+mkdir -p "$W/seed/apps/api/auth"; echo a >"$W/seed/apps/api/auth/x.ts"
+g "$W/seed" add -A; g "$W/seed" commit -qm "main: workflow, claude config, auth"; g "$W/seed" push -q "$W/origin.git" main
+g "$W/claude" fetch -q origin; g "$W/claude" merge -q --no-edit origin/main
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect after the AI merged main" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv workflows)" == 0 && "$(outv agent_config)" == 0 && "$(outv high_risk)" == false ]] && ok \
+  || bad "main's changes are not the AI's (workflows=$(outv workflows) agent_config=$(outv agent_config) high_risk=$(outv high_risk))"
+[[ "$(outv commits)" == 2 ]] && ok || bad "commits count the AI's commit and its merge only (got $(outv commits))"
+# an evil merge: the merge commit itself edits a guarded file
+world; claude_commit ai/12-e src/app.ts
+g "$W/seed" pull -q "$W/origin.git" main; echo m >"$W/seed/m.txt"; g "$W/seed" add -A; g "$W/seed" commit -qm main-change; g "$W/seed" push -q "$W/origin.git" main
+g "$W/claude" fetch -q origin; g "$W/claude" merge -q --no-commit origin/main
+mkdir -p "$W/claude/apps/api/auth"; echo evil >"$W/claude/apps/api/auth/guard.ts"; g "$W/claude" add -A; g "$W/claude" commit -qm "merge main"
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect an evil merge" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv high_risk)" == true ]] && ok || bad "a guarded file written by the merge itself is high risk"
 # agent config and the push scripts are counted separately (refused in every mode)
 world; claude_commit ai/12-cfg .claude/commands/review.md; claude_commit ai/12-cfg CLAUDE.md
 claude_commit ai/12-cfg scripts/ai-push/lib.sh; claude_commit ai/12-cfg src/app.ts

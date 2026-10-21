@@ -37,9 +37,9 @@ c() {  # c <id> <who-json> <created> <body> [updated]
   printf '{"id":%s,"html_url":"https://github.com/o/r/issues/12#issuecomment-%s",%s,"created_at":"%s","updated_at":"%s","body":%s}' \
     "$1" "$1" "$2" "$3" "${5:-$3}" "$(jq -Rn --arg b "$4" '$b')"
 }
-ev() {  # ev <label> <actor-type> <created>
+ev() {  # ev <label> <actor-type> <created> [actor-login]
   printf '{"event":"labeled","label":{"name":"%s"},"actor":{"login":"%s","type":"%s"},"created_at":"%s"}' \
-    "$1" "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" "$2" "$3"
+    "$1" "${4:-$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')}" "$2" "$3"
 }
 fetch() { bash "$S/fetch-approved-docs.sh" --issue 12 --bot 'claude[bot]' --out "$tmp/doc.md" "$@"; }
 
@@ -157,6 +157,33 @@ why "says ambiguous" "ambiguous"
 printf '[%s,%s,%s]' "$(ev ai:spec User 2026-10-20T09:50:00Z)" "$(ev ai:spec User 2026-10-20T10:10:00Z)" "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"
 expect_ok "after re-running the spec, the newest one is used" fetch --stage spec --approved-by-label approved:spec --window-label ai:spec
 has "the re-run spec is saved" "$tmp/doc.md" "second version from another run"
+# no doc in the window: the latest one is from an earlier round (stale), even though
+# it is the latest before T; only the window check refuses it
+printf '[%s,%s]' "$SPEC" "$ANS1" >"$R/comments.json"
+printf '[%s,%s]' "$(ev ai:spec User 2026-10-20T10:20:00Z)" "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"
+expect_ok   "without a window the stale spec would be taken" fetch --stage spec --approved-by-label approved:spec
+expect_fail "with the window, a spec from before it is stale" fetch --stage spec --approved-by-label approved:spec --window-label ai:spec
+why "says it is from an earlier round" "earlier round"
+# the plan case from the review: approved:spec re-applied after the plan, then approved:plan
+PLAN_OLD="$(c 50 "$bot" 2026-10-20T10:30:00Z $'# Plan: written for the first spec')"
+printf '[%s,%s]' "$SPEC" "$PLAN_OLD" >"$R/comments.json"
+printf '[%s,%s,%s]' "$(ev approved:spec User 2026-10-20T10:10:00Z)" "$(ev approved:spec User 2026-10-20T10:40:00Z)" "$(ev approved:plan User 2026-10-20T11:00:00Z)" >"$R/events.json"
+expect_fail "a plan from before a re-approved spec is not approved" fetch --stage plan --approved-by-label approved:plan --window-label approved:spec
+# no window label at all
+printf '[%s,%s]' "$SPEC" "$ANS1" >"$R/comments.json"
+printf '[%s]' "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"
+expect_fail "no window label event fails" fetch --stage spec --approved-by-label approved:spec --window-label ai:spec
+why "says there is no window" "no window"
+# the window label added by someone without write access does not count
+printf '[%s,%s]' "$(ev ai:spec User 2026-10-20T09:50:00Z triager)" "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"
+echo triage >"$R/perm-triager"
+expect_fail "a window opened by a triager does not count" fetch --stage spec --approved-by-label approved:spec --window-label ai:spec
+why "says no write access" "does not have write access"
+rm -f "$R/perm-triager"
+expect_ok "the same window opened by a writer works" fetch --stage spec --approved-by-label approved:spec --window-label ai:spec
+# --window-label is only for approved mode
+expect_fail "--window-label with --after-label is a usage error" fetch --stage plan --after-label approved:spec --window-label ai:spec
+why "says it is only for approved mode" "only with --approved-by-label"
 
 # ---------------------------------------------------------------- commit-docs
 g() { git -C "$1" "${@:2}"; }

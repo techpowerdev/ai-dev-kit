@@ -114,8 +114,11 @@ if [[ "$mode" == pipeline ]]; then
   fi
 fi
 
-# 6. commit count
-commits="$(ai_git rev-list --count "$base..$tip")"
+# 6. commit count: only the AI's commits. Commits already on the default branch (the AI
+# merged it in) are not the AI's work and do not count.
+main_ref="refs/remotes/origin/$default_branch"
+ai_git rev-parse --verify --quiet "$main_ref^{commit}" >/dev/null || ai_fail "origin/$default_branch is not in the trusted checkout."
+commits="$(ai_git rev-list --count "$base..$tip" "^$main_ref")"
 (( commits > 0 )) || nothing
 (( commits <= 200 )) || ai_fail "$commits commits is more than the 200 allowed in one push."
 
@@ -123,16 +126,21 @@ commits="$(ai_git rev-list --count "$base..$tip")"
 # --no-renames: a rename shows as delete + add, so moving a file out of a guarded
 # directory still counts. quotePath=false and -z: non-ASCII names stay as they are
 # instead of being C-quoted (which would dodge the anchored checks).
-# Net diff plus every path any commit in the range touched (merges per parent): a merge
-# that brings in main and then reverts a fix in a guarded path shows up even when the
-# net diff hides it.
-# Each git call fails the script on error (pipefail), so a git error can never read
-# as "no paths changed" and turn the high-risk gate open.
-net_paths="$(ai_git -c core.quotePath=false diff --no-renames --name-only -z "$base" "$tip" | tr '\0' '\n')" \
-  || ai_fail "Could not list the changed paths (git diff failed)."
-history_paths="$(ai_git -c core.quotePath=false log -m --no-renames --name-only -z --format= "$base..$tip" | tr '\0' '\n')" \
-  || ai_fail "Could not list the paths touched in history (git log failed)."
-changed="$(printf '%s\n%s\n' "$net_paths" "$history_paths" | { grep -v '^$' || true; } | sort -u)"
+# The paths are those touched by the AI's commits, i.e. base..tip minus everything on
+# the default branch:
+#   - every non-merge commit: all paths it changed (so a change that a later commit
+#     reverts still counts; the net diff would hide it)
+#   - every merge: dense-combined lists only paths whose result differs from ALL
+#     parents, i.e. what the merge itself wrote (an "evil merge"). A clean merge of
+#     main adds nothing, so main's own workflow or .claude/ changes are not blamed on
+#     the AI. Any other content in the result comes from a parent, whose own commits
+#     are either listed here or are on main.
+# A git error fails the script (pipefail), so it can never read as "no paths changed"
+# and turn the high-risk gate open.
+history_paths="$(ai_git -c core.quotePath=false log --no-renames --name-only -z --format= \
+                   --diff-merges=dense-combined "$base..$tip" "^$main_ref" | tr '\0' '\n')" \
+  || ai_fail "Could not list the paths the AI's commits touched (git log failed)."
+changed="$(printf '%s\n' "$history_paths" | { grep -v '^$' || true; } | sort -u)"
 scratch="$(printf '%s\n' "$changed" | grep -E '(^|/)\.ai-(pr-body|comment|review)\.md$' || true)"
 [[ -z "$scratch" ]] || ai_fail "AI scratch files were committed: $(printf '%s' "$scratch" | tr '\n' ' ')"
 workflows="$(printf '%s\n' "$changed" | grep -c '^\.github/workflows/' || true)"
