@@ -126,21 +126,35 @@ commits="$(ai_git rev-list --count "$base..$tip" "^$main_ref")"
 # --no-renames: a rename shows as delete + add, so moving a file out of a guarded
 # directory still counts. quotePath=false and -z: non-ASCII names stay as they are
 # instead of being C-quoted (which would dodge the anchored checks).
-# The paths are those touched by the AI's commits, i.e. base..tip minus everything on
-# the default branch:
-#   - every non-merge commit: all paths it changed (so a change that a later commit
-#     reverts still counts; the net diff would hide it)
-#   - every merge: dense-combined lists only paths whose result differs from ALL
-#     parents, i.e. what the merge itself wrote (an "evil merge"). A clean merge of
-#     main adds nothing, so main's own workflow or .claude/ changes are not blamed on
-#     the AI. Any other content in the result comes from a parent, whose own commits
-#     are either listed here or are on main.
+# The paths are the union of:
+#   1. the PR's effect: the diff from the merge base with the default branch to the tip.
+#      This is what merging the PR would change on main. It catches a merge that keeps
+#      the AI's side ("merge -s ours", or "ours" in a conflict) and so silently undoes a
+#      fix main made in a guarded file: no AI commit wrote that, but merging it would.
+#      After a clean merge of main the merge base is main's tip, so main's own changes
+#      are not blamed on the AI. More than one merge base (a criss-cross merge) is
+#      ambiguous: fail.
+#   2. the AI's commits: base..tip minus everything on the default branch.
+#      - every non-merge commit: all paths it changed, so a change that a later commit
+#        reverts still counts (the diff in 1 would hide it)
+#      - every merge: dense-combined (git 2.31+, checked above) lists the paths whose
+#        result differs from all parents, i.e. what the merge itself wrote. 1 and the
+#        non-merge commits already cover this (the tests pass without it); it stays as
+#        a second layer that does not depend on how git log treats merges by default.
+# On a resumed branch, 1 also lists paths from earlier runs on the branch. That
+# over-reports, which is the safe direction.
 # A git error fails the script (pipefail), so it can never read as "no paths changed"
 # and turn the high-risk gate open.
+merge_bases="$(ai_git merge-base --all "$main_ref" "$tip")" \
+  || ai_fail "The commits share no history with origin/$default_branch."
+[[ "$(printf '%s\n' "$merge_bases" | grep -c .)" == 1 ]] \
+  || ai_fail "The commits have more than one merge base with origin/$default_branch (criss-cross merge): cannot tell what the PR changes."
+effect_paths="$(ai_git -c core.quotePath=false diff --no-renames --name-only -z "$merge_bases" "$tip" | tr '\0' '\n')" \
+  || ai_fail "Could not list what the PR changes (git diff failed)."
 history_paths="$(ai_git -c core.quotePath=false log --no-renames --name-only -z --format= \
                    --diff-merges=dense-combined "$base..$tip" "^$main_ref" | tr '\0' '\n')" \
   || ai_fail "Could not list the paths the AI's commits touched (git log failed)."
-changed="$(printf '%s\n' "$history_paths" | { grep -v '^$' || true; } | sort -u)"
+changed="$(printf '%s\n%s\n' "$effect_paths" "$history_paths" | { grep -v '^$' || true; } | sort -u)"
 scratch="$(printf '%s\n' "$changed" | grep -E '(^|/)\.ai-(pr-body|comment|review)\.md$' || true)"
 [[ -z "$scratch" ]] || ai_fail "AI scratch files were committed: $(printf '%s' "$scratch" | tr '\n' ' ')"
 workflows="$(printf '%s\n' "$changed" | grep -c '^\.github/workflows/' || true)"

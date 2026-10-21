@@ -169,6 +169,7 @@ PLAN_OLD="$(c 50 "$bot" 2026-10-20T10:30:00Z $'# Plan: written for the first spe
 printf '[%s,%s]' "$SPEC" "$PLAN_OLD" >"$R/comments.json"
 printf '[%s,%s,%s]' "$(ev approved:spec User 2026-10-20T10:10:00Z)" "$(ev approved:spec User 2026-10-20T10:40:00Z)" "$(ev approved:plan User 2026-10-20T11:00:00Z)" >"$R/events.json"
 expect_fail "a plan from before a re-approved spec is not approved" fetch --stage plan --approved-by-label approved:plan --window-label approved:spec
+why "says the plan is from an earlier round" "earlier round"
 # no window label at all
 printf '[%s,%s]' "$SPEC" "$ANS1" >"$R/comments.json"
 printf '[%s]' "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"

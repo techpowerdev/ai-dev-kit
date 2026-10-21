@@ -29,6 +29,8 @@
 #     example approved:spec re-applied after the plan), so it is stale
 #   - more than one doc in the window: ambiguous (another bot run may have posted one)
 # To revise a doc, re-run its stage (re-add the window label) so there is one.
+# A window label re-added by someone without write access makes the fetch fail until a
+# writer adds it again: it can block, never widen, the approval.
 # --bot must be the Claude app's login; github-actions[bot] is refused because any
 # workflow with GITHUB_TOKEN can post as it.
 set -euo pipefail
