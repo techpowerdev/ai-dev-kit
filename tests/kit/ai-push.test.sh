@@ -399,6 +399,61 @@ for sub in diff log; do
     --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
   out_has "it says git $sub failed" "(git $sub failed)"
 done
+# merging main in: main's own changes are not the AI's (review of #21)
+world; claude_commit ai/12-m src/app.ts
+g "$W/seed" pull -q "$W/origin.git" main; mkdir -p "$W/seed/.github/workflows" "$W/seed/.claude"
+echo w >"$W/seed/.github/workflows/new.yml"; echo c >"$W/seed/.claude/settings.json"; echo p >"$W/seed/apps-auth.txt"
+mkdir -p "$W/seed/apps/api/auth"; echo a >"$W/seed/apps/api/auth/x.ts"
+g "$W/seed" add -A; g "$W/seed" commit -qm "main: workflow, claude config, auth"; g "$W/seed" push -q "$W/origin.git" main
+g "$W/claude" fetch -q origin; g "$W/claude" merge -q --no-edit origin/main
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect after the AI merged main" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv workflows)" == 0 && "$(outv agent_config)" == 0 && "$(outv high_risk)" == false ]] && ok \
+  || bad "main's changes are not the AI's (workflows=$(outv workflows) agent_config=$(outv agent_config) high_risk=$(outv high_risk))"
+[[ "$(outv commits)" == 2 ]] && ok || bad "commits count the AI's commit and its merge only (got $(outv commits))"
+# an evil merge: the merge commit itself edits a guarded file
+world; claude_commit ai/12-e src/app.ts
+g "$W/seed" pull -q "$W/origin.git" main; echo m >"$W/seed/m.txt"; g "$W/seed" add -A; g "$W/seed" commit -qm main-change; g "$W/seed" push -q "$W/origin.git" main
+g "$W/claude" fetch -q origin; g "$W/claude" merge -q --no-commit origin/main
+mkdir -p "$W/claude/apps/api/auth"; echo evil >"$W/claude/apps/api/auth/guard.ts"; g "$W/claude" add -A; g "$W/claude" commit -qm "merge main"
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect an evil merge" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv high_risk)" == true ]] && ok || bad "a guarded file written by the merge itself is high risk"
+# review of #22: a merge that keeps the AI's side undoes main's fixes in guarded files
+world; claude_commit ai/12-o src/app.ts
+g "$W/seed" pull -q "$W/origin.git" main
+mkdir -p "$W/seed/apps/api/auth" "$W/seed/scripts/ai-push" "$W/seed/.github/workflows"
+echo fix >"$W/seed/apps/api/auth/x.ts"; echo fix >"$W/seed/scripts/ai-push/lib.sh"; echo fix >"$W/seed/.github/workflows/w.yml"
+g "$W/seed" add -A; g "$W/seed" commit -qm "main: security fixes"; g "$W/seed" push -q "$W/origin.git" main
+g "$W/claude" fetch -q origin; g "$W/claude" merge -q --no-edit -s ours origin/main
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect a merge -s ours of main" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv high_risk)" == true && "$(outv agent_config)" -ge 1 && "$(outv workflows)" -ge 1 ]] && ok \
+  || bad "undoing main's guarded changes is caught (high_risk=$(outv high_risk) agent_config=$(outv agent_config) workflows=$(outv workflows))"
+# main's version of an existing guarded file plus an extra edit made in the merge
+world; mkdir -p "$W/claude/apps/api/auth"; claude_commit ai/12-x2 apps/api/auth/g.ts "v1"; g "$W/claude" push -q origin HEAD:main
+g "$W/claude" checkout -q -B ai/12-x2; BASE="$(g "$W/claude" rev-parse HEAD)"; claude_commit ai/12-x2 src/app.ts
+g "$W/seed" pull -q "$W/origin.git" main; echo "v2" >"$W/seed/apps/api/auth/g.ts"; g "$W/seed" commit -qam "main: v2"; g "$W/seed" push -q "$W/origin.git" main
+g "$W/claude" fetch -q origin; g "$W/claude" merge -q --no-commit origin/main; echo "v2 plus a backdoor" >"$W/claude/apps/api/auth/g.ts"
+g "$W/claude" add -A; g "$W/claude" commit -qm "merge main"
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect a merge that edits main's version of a guarded file" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv high_risk)" == true ]] && ok || bad "an extra edit made in the merge to a guarded file is high risk"
+# a merge writes a guarded file and a later commit removes it: nets to zero, still counted
+world; claude_commit ai/12-r src/app.ts
+g "$W/seed" pull -q "$W/origin.git" main; echo m >"$W/seed/m.txt"; g "$W/seed" add -A; g "$W/seed" commit -qm main-change; g "$W/seed" push -q "$W/origin.git" main
+g "$W/claude" fetch -q origin; g "$W/claude" merge -q --no-commit origin/main
+mkdir -p "$W/claude/apps/api/auth"; echo evil >"$W/claude/apps/api/auth/tmp.ts"; g "$W/claude" add -A; g "$W/claude" commit -qm "merge main"
+g "$W/claude" rm -q apps/api/auth/tmp.ts; g "$W/claude" commit -qm "remove it"
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect a merge that wrote a guarded file later removed" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv high_risk)" == true ]] && ok || bad "a guarded file written by a merge counts even when a later commit removes it"
+# the default branch must be in the trusted checkout
+world; claude_commit ai/12-n f1; g "$W/claude" push -q origin ai/12-n; BASE="$(remote_sha ai/12-n)"; claude_commit ai/12-n f2
+bundle --mode pr --issue 12 --branch ai/12-n >/dev/null; trusted
+g "$W/trusted" update-ref -d refs/remotes/origin/main
+expect_fail "inspect without origin/main fails closed" inspect --mode pr --number 5 --expected-branch ai/12-n
+out_has "it says origin/main is missing" "is not in the trusted checkout"
 # agent config and the push scripts are counted separately (refused in every mode)
 world; claude_commit ai/12-cfg .claude/commands/review.md; claude_commit ai/12-cfg CLAUDE.md
 claude_commit ai/12-cfg scripts/ai-push/lib.sh; claude_commit ai/12-cfg src/app.ts

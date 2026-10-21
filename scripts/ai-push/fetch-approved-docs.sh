@@ -21,10 +21,16 @@
 # Answers (approved mode): comments by people with write+ permission, not bots,
 # created after the doc and at or before T. An answer edited after T fails, like the
 # doc (the text must be what the approver saw).
-# --window-label (approved mode): the doc must be the ONLY bot doc comment between the
-# latest human event for that label (e.g. ai:spec for a spec, approved:spec for a
-# plan) and T. More than one is ambiguous (another bot run may have posted one): fail,
-# and re-run the stage to get a single doc.
+# --window-label (approved mode only): the doc must be the ONLY bot doc comment between
+# T0, the latest event where a person with write access added that label (e.g. ai:spec
+# for a spec, approved:spec for a plan), and T. Fails when:
+#   - nobody with write access added the window label before T (no window)
+#   - no doc in the window: the doc before it was written for an earlier round (for
+#     example approved:spec re-applied after the plan), so it is stale
+#   - more than one doc in the window: ambiguous (another bot run may have posted one)
+# To revise a doc, re-run its stage (re-add the window label) so there is one.
+# A window label re-added by someone without write access makes the fetch fail until a
+# writer adds it again: it can block, never widen, the approval.
 # --bot must be the Claude app's login; github-actions[bot] is refused because any
 # workflow with GITHUB_TOKEN can post as it.
 set -euo pipefail
@@ -48,6 +54,7 @@ while (( $# )); do
 done
 [[ "$issue" =~ ^[0-9]+$ && "$stage" =~ ^(spec|plan)$ && -n "$bot" && -n "$out" && -n "$how" && -n "$repo" ]] \
   || { echo "usage: see header" >&2; exit 2; }
+[[ -z "$window_label" || "$how" == approved ]] || { echo "--window-label works only with --approved-by-label" >&2; exit 2; }
 [[ "$bot" != "github-actions[bot]" ]] || ai_fail "--bot must be the Claude app's login, not github-actions[bot]."
 
 # can_write <login> — 0 if the user has write, maintain or admin on the repo, 1 if
@@ -92,14 +99,20 @@ else
 fi
 [[ -n "$doc" ]] || ai_fail "No '$heading' comment by $bot $( [[ $how == approved ]] && echo before || echo after ) '$label' on #$issue."
 
-if [[ "$how" == approved && -n "$window_label" ]]; then
-  T0="$(jq -r --arg l "$window_label" --arg t "$T" '
+if [[ -n "$window_label" ]]; then
+  window="$(jq -c --arg l "$window_label" --arg t "$T" '
     [ .[] | select(.event == "labeled" and .label.name == $l and (.actor.login // "") != ""
                    and (.actor.type // "") != "Bot" and .created_at < $t) ]
-    | sort_by(.created_at) | last | .created_at // ""' <<<"$events")"
+    | sort_by(.created_at) | last // empty' <<<"$events")"
+  [[ -n "$window" ]] || ai_fail "No person added '$window_label' before '$label' on #$issue, so there is no window to take the $stage from."
+  T0="$(jq -r '.created_at' <<<"$window")"
+  window_actor="$(jq -r '.actor.login' <<<"$window")"
+  can_write "$window_actor" || ai_fail "@$window_actor added '$window_label' but does not have write access: the window does not count."
   count="$(jq --arg bot "$bot" --arg h "$heading" --arg t "$T" --arg t0 "$T0" \
     "[ .[] | select($is_doc and .created_at < \$t and .created_at > \$t0) ] | length" <<<"$comments")"
-  if (( count > 1 )); then
+  if (( count == 0 )); then
+    ai_fail "No '$heading' comment by $bot between '$window_label' ($T0) and '$label' ($T): the one before is from an earlier round. Re-run that stage, then approve again."
+  elif (( count > 1 )); then
     ai_fail "$count '$heading' comments by $bot between '$window_label' and '$label': ambiguous. Re-run that stage so there is one, then approve again."
   fi
 fi
