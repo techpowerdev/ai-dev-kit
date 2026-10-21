@@ -94,6 +94,11 @@ for s in "Fetch the approved spec and plan" "Create push token" "Push branch and
 done
 expect "ai-push: refused=false is set in one place" test "$(grep -c 'refused=false' "$AP")" -eq 1
 expect "ai-push: the gate refuses any workflow change" grep -q 'reason=workflows' "$AP"
+expect "ai-push: the gate refuses agent config in every mode" grep -q 'reason=agent-config' "$AP"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: the gate fails when inspect did not report agent_config" grep -qF '"$AGENT_CONFIG" =~ ^[0-9]+$' "$AP"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: the pr-mode report is posted as github-actions[bot]" grep -qF 'GH_TOKEN="$COMMENT_TOKEN" gh pr comment' "$AP"
 # shellcheck disable=SC2016  # literal text to match, not an expansion
 expect "ai-push: high risk in pipeline is denied unless the plan was approved" grep -qF '"$MODE" == pipeline && "$HIGH_RISK" == true && "$DOCS" != plan-approved' "$AP"
 wf_perm="$(grep -nE '^ *permission-workflows:' "$AP" || true)"

@@ -7,8 +7,9 @@
 # Never checks out Claude's tree and never runs repo hooks (see ai_git).
 #
 # Outputs (GITHUB_OUTPUT): commits, branch, tip, workflows (count of changed
-# .github/workflows files), high_risk (true if a changed path matches a risk:high glob
-# in the labeler file).
+# .github/workflows files), agent_config (count of changed paths that configure the AI
+# or this push path: .claude/**, CLAUDE.md, scripts/ai-push/**), high_risk (true if a
+# changed path matches a risk:high glob in the labeler file).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/ai-push/lib.sh
@@ -135,6 +136,9 @@ changed="$(printf '%s\n%s\n' "$net_paths" "$history_paths" | { grep -v '^$' || t
 scratch="$(printf '%s\n' "$changed" | grep -E '(^|/)\.ai-(pr-body|comment|review)\.md$' || true)"
 [[ -z "$scratch" ]] || ai_fail "AI scratch files were committed: $(printf '%s' "$scratch" | tr '\n' ' ')"
 workflows="$(printf '%s\n' "$changed" | grep -c '^\.github/workflows/' || true)"
+# The AI's own config and the push scripts: an approved plan for app code never
+# approves changes to these, so ai-push.yml refuses them in every mode.
+agent_config="$(printf '%s\n' "$changed" | grep -cE '^(\.claude/|CLAUDE\.md$|scripts/ai-push/)' || true)"
 github_files="$(printf '%s\n' "$changed" | grep '^\.github/' || true)"
 if [[ -n "$github_files" ]]; then
   ai_warn "This push changes files under .github/ ($workflows workflow file(s)): $(printf '%s\n' "$github_files" | head -20 | tr '\n' ' ')"
@@ -162,5 +166,6 @@ ai_output commits "$commits"
 ai_output branch "$branch"
 ai_output tip "$tip"
 ai_output workflows "$workflows"
+ai_output agent_config "$agent_config"
 ai_output high_risk "$high_risk"
 echo "OK: $commits commit(s) on $branch, tip $tip, high_risk=$high_risk."

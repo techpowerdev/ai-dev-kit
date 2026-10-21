@@ -10,6 +10,8 @@
 #        - pr mode: fork, non-ai branch, plain issue
 #        - any mode: the commits change .github/workflows/* (workflow files run with the
 #          repo's secrets, so the AI never pushes them; a human edits workflows)
+#        - any mode, even with an approved plan: the commits change the AI's own config
+#          or this push path (.claude/**, CLAUDE.md, scripts/ai-push/**)
 #        - pipeline mode: high-risk paths without a human-approved plan (Gate 1b, A5);
 #          deny by default, only docs == plan-approved may push them
 #   4. for the AI pipeline, saves the approved spec and plan into the same PR
@@ -160,7 +162,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash "$RUNNER_TEMP/trusted/refuse-push.sh" --number "$NUMBER" --reason "$REASON"
 
-      - name: Gate (workflow files, high risk without plan approval)
+      - name: Gate (workflow files, agent config, high risk without plan approval)
         id: gate
         # Every later step needs refused == 'false', which only this step sets: if it is
         # skipped or fails, nothing is fetched, no token is created and nothing is pushed.
@@ -170,13 +172,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WORKFLOWS: ${{ steps.inspect.outputs.workflows }}
+          AGENT_CONFIG: ${{ steps.inspect.outputs.agent_config }}
           HIGH_RISK: ${{ steps.inspect.outputs.high_risk }}
         run: |
-          [[ "$WORKFLOWS" =~ ^[0-9]+$ && "$HIGH_RISK" =~ ^(true|false)$ ]] \
-            || { echo "::error::inspect did not report workflows/high_risk"; exit 1; }
+          [[ "$WORKFLOWS" =~ ^[0-9]+$ && "$AGENT_CONFIG" =~ ^[0-9]+$ && "$HIGH_RISK" =~ ^(true|false)$ ]] \
+            || { echo "::error::inspect did not report workflows/agent_config/high_risk"; exit 1; }
           reason=""
           if (( WORKFLOWS > 0 )); then
             reason=workflows
+          elif (( AGENT_CONFIG > 0 )); then
+            reason=agent-config
           elif [[ "$MODE" == pipeline && "$HIGH_RISK" == true && "$DOCS" != plan-approved ]]; then
             reason=high-risk   # deny by default (A5): only an approved plan may push high-risk paths
           fi
@@ -228,6 +233,9 @@ jobs:
         env:
           PUSH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          # Comments carry AI-chosen file names: post them as github-actions[bot], which
+          # cannot trigger @-mention workflows.
+          COMMENT_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.inspect.outputs.branch }}
           TIP: ${{ steps.inspect.outputs.tip }}
           COMMITS: ${{ steps.inspect.outputs.commits }}
@@ -269,6 +277,6 @@ jobs:
             bash "$T/open-pr.sh" --branch "$BRANCH" --base "$DEFAULT_BRANCH" --issue "$NUMBER" \
               --range "$BASE_SHA..$TIP" --footer "$footer" --body-in "$RUNNER_TEMP/incoming/pr-body.md" --repo .
           else
-            gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$footer"
+            GH_TOKEN="$COMMENT_TOKEN" gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$footer"
             echo "pr_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/$NUMBER" >> "$GITHUB_OUTPUT"
           fi
