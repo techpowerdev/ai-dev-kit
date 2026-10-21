@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Usage: fetch-approved-docs.sh --issue N --stage spec|plan --bot LOGIN --out FILE
-#          (--approved-by-label LABEL | --after-label LABEL) [--repo OWNER/REPO]
+#          (--approved-by-label LABEL | --after-label LABEL)
+#          [--window-label LABEL] [--repo OWNER/REPO]
 # Env: GH_TOKEN (read access is enough), GITHUB_REPOSITORY (if --repo is not given)
 #
 # Trusted. Picks the spec or plan comment that a human approved and writes it, with
@@ -20,6 +21,10 @@
 # Answers (approved mode): comments by people with write+ permission, not bots,
 # created after the doc and at or before T. An answer edited after T fails, like the
 # doc (the text must be what the approver saw).
+# --window-label (approved mode): the doc must be the ONLY bot doc comment between the
+# latest human event for that label (e.g. ai:spec for a spec, approved:spec for a
+# plan) and T. More than one is ambiguous (another bot run may have posted one): fail,
+# and re-run the stage to get a single doc.
 # --bot must be the Claude app's login; github-actions[bot] is refused because any
 # workflow with GITHUB_TOKEN can post as it.
 set -euo pipefail
@@ -27,7 +32,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/ai-push/lib.sh
 source "$here/lib.sh"
 
-issue=""; stage=""; bot=""; out=""; label=""; how=""; repo="${GITHUB_REPOSITORY:-}"
+issue=""; stage=""; bot=""; out=""; label=""; how=""; window_label=""; repo="${GITHUB_REPOSITORY:-}"
 while (( $# )); do
   case "$1" in
     --issue) issue="$2"; shift 2 ;;
@@ -36,6 +41,7 @@ while (( $# )); do
     --out) out="$2"; shift 2 ;;
     --approved-by-label) how=approved; label="$2"; shift 2 ;;
     --after-label) how=after; label="$2"; shift 2 ;;
+    --window-label) window_label="$2"; shift 2 ;;
     --repo) repo="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -44,11 +50,18 @@ done
   || { echo "usage: see header" >&2; exit 2; }
 [[ "$bot" != "github-actions[bot]" ]] || ai_fail "--bot must be the Claude app's login, not github-actions[bot]."
 
-# can_write <login> — 0 if the user has write, maintain or admin on the repo.
+# can_write <login> — 0 if the user has write, maintain or admin on the repo, 1 if
+# not. If the permission cannot be read, the script fails: an API error must not look
+# like "no write access" (that would silently drop an owner's answer).
 can_write() {
   local perm
-  perm="$(gh api "repos/$repo/collaborators/$1/permission" --jq .permission 2>/dev/null || true)"
-  [[ "$perm" =~ ^(admin|maintain|write)$ ]]
+  perm="$(gh api "repos/$repo/collaborators/$1/permission" --jq .permission 2>/dev/null)" \
+    || ai_fail "Could not read the repo permission of @$1; not guessing."
+  case "$perm" in
+    admin|maintain|write) return 0 ;;
+    read|triage|none) return 1 ;;
+    *) ai_fail "Unexpected permission '$perm' for @$1." ;;
+  esac
 }
 case "$stage" in spec) heading='# Spec:' ;; plan) heading='# Plan:' ;; esac
 
@@ -79,6 +92,17 @@ else
 fi
 [[ -n "$doc" ]] || ai_fail "No '$heading' comment by $bot $( [[ $how == approved ]] && echo before || echo after ) '$label' on #$issue."
 
+if [[ "$how" == approved && -n "$window_label" ]]; then
+  T0="$(jq -r --arg l "$window_label" --arg t "$T" '
+    [ .[] | select(.event == "labeled" and .label.name == $l and (.actor.login // "") != ""
+                   and (.actor.type // "") != "Bot" and .created_at < $t) ]
+    | sort_by(.created_at) | last | .created_at // ""' <<<"$events")"
+  count="$(jq --arg bot "$bot" --arg h "$heading" --arg t "$T" --arg t0 "$T0" \
+    "[ .[] | select($is_doc and .created_at < \$t and .created_at > \$t0) ] | length" <<<"$comments")"
+  if (( count > 1 )); then
+    ai_fail "$count '$heading' comments by $bot between '$window_label' and '$label': ambiguous. Re-run that stage so there is one, then approve again."
+  fi
+fi
 doc_created="$(jq -r '.created_at' <<<"$doc")"
 doc_updated="$(jq -r '.updated_at // .created_at' <<<"$doc")"
 if [[ "$how" == approved && "$doc_updated" > "$T" ]]; then

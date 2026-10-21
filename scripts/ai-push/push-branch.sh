@@ -63,6 +63,9 @@ case "$mode" in
     fi ;;
 esac
 
-ai_git push --no-verify --porcelain "$remote" "$tip:refs/heads/$branch"
+# The lease closes the gap between ls-remote and push: the push only happens if the
+# remote branch is still exactly what was checked above (absent, or expected_old).
+# The new tip descends from it (inspect-bundle.sh checked), so this is a fast-forward.
+ai_git push --no-verify --porcelain "--force-with-lease=refs/heads/$branch:$remote_old" "$remote" "$tip:refs/heads/$branch"
 ai_output pushed true
 echo "Pushed $tip to $branch."

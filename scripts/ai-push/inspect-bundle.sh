@@ -40,9 +40,13 @@ git_version="$(git version | awk '{print $3}')"
 if [[ "$(printf '%s\n2.46.0\n' "$git_version" | sort -t. -k1,1n -k2,2n -k3,3n | head -n1)" != "2.46.0" ]]; then
   ai_fail "git $git_version is too old: 2.46 or newer is needed to fsck objects from a bundle."
 fi
+globs=""
 if [[ -n "$labeler" ]]; then
   [[ -f "$labeler" ]] || ai_fail "Labeler file $labeler not found: cannot decide whether the change is high risk."
-  [[ -n "$(ai_high_risk_globs "$labeler")" ]] || ai_fail "No risk:high globs in $labeler: cannot decide whether the change is high risk."
+  globs="$(ai_high_risk_globs "$labeler" 2>"${TMPDIR:-/tmp}/ai-globs.err.$$")" \
+    || ai_fail "$(cat "${TMPDIR:-/tmp}/ai-globs.err.$$")"
+  rm -f "${TMPDIR:-/tmp}/ai-globs.err.$$"
+  [[ -n "$globs" ]] || ai_fail "No risk:high globs in $labeler: cannot decide whether the change is high risk."
 fi
 cd "$repo"
 [[ -f "$in/status" && ! -L "$in/status" ]] || ai_fail "No status file in the artifact ($in): it may not have been downloaded. Not treating that as 'nothing to push'."
@@ -115,7 +119,12 @@ commits="$(ai_git rev-list --count "$base..$tip")"
 # --no-renames: a rename shows as delete + add, so moving a file out of a guarded
 # directory still counts. quotePath=false and -z: non-ASCII names stay as they are
 # instead of being C-quoted (which would dodge the anchored checks).
-changed="$(ai_git -c core.quotePath=false diff --no-renames --name-only -z "$base" "$tip" | tr '\0' '\n')"
+# Net diff plus every path any commit in the range touched (merges per parent): a merge
+# that brings in main and then reverts a fix in a guarded path shows up even when the
+# net diff hides it.
+changed="$( { ai_git -c core.quotePath=false diff --no-renames --name-only -z "$base" "$tip"
+              ai_git -c core.quotePath=false log -m --no-renames --name-only -z --format= "$base..$tip"; } \
+            | tr '\0' '\n' | grep -v '^$' | sort -u || true)"
 scratch="$(printf '%s\n' "$changed" | grep -E '(^|/)\.ai-(pr-body|comment|review)\.md$' || true)"
 [[ -z "$scratch" ]] || ai_fail "AI scratch files were committed: $(printf '%s' "$scratch" | tr '\n' ' ')"
 workflows="$(printf '%s\n' "$changed" | grep -c '^\.github/workflows/' || true)"
@@ -125,8 +134,6 @@ if [[ -n "$github_files" ]]; then
 fi
 high_risk=false; risky=""
 if [[ -n "$labeler" ]]; then
-  [[ -f "$labeler" ]] || ai_fail "Labeler file $labeler disappeared."
-  globs="$(ai_high_risk_globs "$labeler")"
   while IFS= read -r p; do
     [[ -z "$p" ]] && continue
     while IFS= read -r g; do

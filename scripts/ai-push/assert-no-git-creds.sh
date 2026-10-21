@@ -22,9 +22,20 @@ while (( $# )); do
   esac
 done
 
+git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || { echo "::error title=ai-push::$repo is not a git repository; cannot check it." ; exit 1; }
+
+# Key names like url.<URL>.insteadof can carry a secret in the URL part: print only
+# the section and the variable name.
+key_name() {
+  local k="$1"
+  case "$k" in
+    url.*.*|http.*.*|credential.*.*|includeif.*.*) printf '%s.<…>.%s' "${k%%.*}" "${k##*.}" ;;
+    *) printf '%s' "$k" ;;
+  esac
+}
 found=()
 while IFS= read -r key; do
-  [[ -n "$key" ]] && found+=("git config: $(ai_redact_userinfo "$key")")
+  [[ -n "$key" ]] && found+=("git config: $(key_name "$key")")
 done < <(git -C "$repo" config --name-only --get-regexp '^(http\..*extraheader|include(if)?\..*|credential\..*|url\..*|core\.askpass|core\.sshcommand)$' 2>/dev/null || true)
 
 while IFS= read -r line; do
@@ -34,8 +45,13 @@ while IFS= read -r line; do
   elif [[ ! "$url" =~ ^https:// && ! "$url" =~ ^/ && ! "$url" =~ ^file:// ]]; then found+=("remote '$name' is not https (ssh keys or agents could push)"); fi
 done < <(git -C "$repo" remote -v 2>/dev/null | sort -u || true)
 
-for v in GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK; do
+for v in GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK GIT_SSH GIT_SSH_COMMAND GITHUB_TOKEN GH_TOKEN INPUT_GITHUB_TOKEN; do
   [[ -n "${!v:-}" ]] && found+=("environment variable $v is set")
+done
+
+[[ -f "$HOME/.git-credentials" ]] && found+=("file ~/.git-credentials exists")
+for k in "$HOME"/.ssh/id_*; do
+  [[ -e "$k" ]] && found+=("ssh key ~/.ssh/$(basename "$k") exists")
 done
 
 if [[ -n "${RUNNER_TEMP:-}" && -d "$RUNNER_TEMP" ]]; then

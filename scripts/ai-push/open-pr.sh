@@ -46,7 +46,13 @@ ai_validate_branch "$branch" || ai_fail "Refusing to open a PR from '$branch'."
 existing="$(gh pr list --repo "$slug" --head "$branch" --state open --json url,isCrossRepository \
   | jq -r '[.[] | select(.isCrossRepository == false)][0].url // empty')"
 if [[ -n "$existing" ]]; then
-  echo "A PR is already open for $branch: $existing"
+  # A resumed run pushed more commits: the footer in the PR body is now stale, so post
+  # the trusted report for this push as a comment.
+  report="$(mktemp)"
+  { echo "**Trusted push report** for \`$range\` (written by the AI push job, not by the AI)"; echo; cat "$footer"; } >"$report"
+  gh pr comment "$existing" --repo "$slug" --body-file "$report" >/dev/null || ai_warn "Could not post the push report on $existing."
+  rm -f "$report"
+  echo "A PR is already open for $branch: $existing (push report posted)"
   ai_output pr_url "$existing"
   exit 0
 fi
