@@ -159,7 +159,7 @@ gh secret list -R <owner>/<repo>     # ต้องมี AI_PUSH_APP_PRIVATE_KE
 ```bash
 R=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api repos/$R/branches/main/protection --jq '{checks: .required_status_checks.contexts, enforce_admins: .enforce_admins.enabled, approvals: .required_pull_request_reviews.required_approving_review_count}'
-gh api repos/$R/environments --jq '[.environments[].name]'   # preview, staging, production, post-deploy-report
+gh api repos/$R/environments --jq '[.environments[].name]'   # preview, preview-ai, staging, production, post-deploy-report
 ```
 
 ---
@@ -172,6 +172,7 @@ gh api repos/$R/environments --jq '[.environments[].name]'   # preview, staging,
 2. ตั้ง secret ของแต่ละ environment
    ```bash
    gh secret set PREVIEW_DEPLOY_TOKEN    --env preview    -R <owner>/<repo>
+   gh secret set PREVIEW_DEPLOY_TOKEN    --env preview-ai -R <owner>/<repo>   # preview ของ branch ai/* รอคนกดอนุมัติก่อน
    gh secret set STAGING_DEPLOY_TOKEN    --env staging    -R <owner>/<repo>
    gh secret set PRODUCTION_DEPLOY_TOKEN --env production -R <owner>/<repo>
    gh secret set SENTRY_READ_TOKEN -R <owner>/<repo>   # optional, token อ่านอย่างเดียวสำหรับรายงานหลัง deploy

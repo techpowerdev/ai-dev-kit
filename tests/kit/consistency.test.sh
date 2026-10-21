@@ -67,6 +67,12 @@ expect "/plan comments start with the marker the result check skips" grep -q 'mu
 expect "/spec comments start with the marker the result check skips" grep -q 'must start with the line `# Spec: <title>`' .claude/commands/spec.md
 expect "/implement never opens a second PR on a resumed run" grep -q 'do not create another' .claude/commands/implement.md
 expect "/plan always posts the plan on the issue" grep -q 'whatever the risk level' .claude/commands/plan.md
+# ---- preview.yml: AI branches deploy only after a person approves (preview-ai)
+# shellcheck disable=SC2016  # literal ${{ to match, not an expansion
+expect "preview.yml: ai/* branches deploy through preview-ai" \
+  grep -qF "name: \${{ startsWith(github.head_ref, 'ai/') && 'preview-ai' || 'preview' }}" .github/workflows/preview.yml
+expect "setup-github.sh creates preview-ai with a reviewer" grep -qF 'put_env preview-ai' scripts/setup-github.sh
+
 # ---- ai-push.yml (#12): the trusted push job
 AP=.github/workflows/ai-push.yml
 push_step="$(awk '/^      - name: Push branch and open PR$/{f=1} f && /^      - / && !/Push branch and open PR/{f=0} f' "$AP")"

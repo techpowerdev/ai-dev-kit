@@ -16,8 +16,12 @@ on:
 jobs:
   deploy-preview:
     runs-on: ubuntu-latest
+    # A preview deploy runs the PR's code (pnpm install, deploy.sh, the build) with
+    # PREVIEW_DEPLOY_TOKEN. Branches ai/* hold AI-written code, so they deploy through
+    # preview-ai, which waits for a person to approve (setup-github.sh sets the
+    # reviewer). AI QA needs this job, so it waits too. Other branches deploy at once.
     environment:
-      name: preview
+      name: ${{ startsWith(github.head_ref, 'ai/') && 'preview-ai' || 'preview' }}
       url: ${{ steps.deploy.outputs.url }}
     outputs:
       url: ${{ steps.deploy.outputs.url }}
