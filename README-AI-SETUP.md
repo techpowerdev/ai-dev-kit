@@ -80,6 +80,7 @@ gh secret list -R <owner>/<repo>                          # เช็คว่�
 secrets อื่นๆ:
 ```bash
 gh secret set PREVIEW_DEPLOY_TOKEN    --env preview
+gh secret set PREVIEW_DEPLOY_TOKEN    --env preview-ai   # preview ของ branch ai/* รอคนกดอนุมัติ (โค้ดที่ AI เขียนรันพร้อม token นี้)
 gh secret set STAGING_DEPLOY_TOKEN    --env staging
 gh secret set PRODUCTION_DEPLOY_TOKEN --env production
 gh secret set SENTRY_READ_TOKEN        # optional, read-only
@@ -103,7 +104,7 @@ gh secret set SENTRY_READ_TOKEN        # optional, read-only
 ```bash
 R=$(gh repo view --json nameWithOwner -q .nameWithOwner)   # repo ของโฟลเดอร์ปัจจุบัน
 gh api repos/$R/branches/main/protection --jq '{checks: .required_status_checks.contexts, enforce_admins: .enforce_admins.enabled, approvals: .required_pull_request_reviews.required_approving_review_count}'
-gh api repos/$R/environments --jq '[.environments[].name]'   # ต้องมี preview, staging, production, post-deploy-report
+gh api repos/$R/environments --jq '[.environments[].name]'   # ต้องมี preview, preview-ai, staging, production, post-deploy-report
 gh secret list -R $R                                         # ต้องมี Claude credential หนึ่งตัว
 ```
 

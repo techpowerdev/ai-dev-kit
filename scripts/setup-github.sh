@@ -17,8 +17,9 @@
 #
 #   --allow-unprotected-prod
 #              Only for private repos without Enterprise: if GitHub rejects the
-#              environment protection rules (HTTP 422), create production and
-#              post-deploy-report without them instead of stopping. Gate 4 is then off.
+#              environment protection rules (HTTP 422), create production,
+#              post-deploy-report and preview-ai without them instead of stopping.
+#              Gate 4 and the approval of AI preview deploys are then off.
 #
 # Safe to re-run: every call is an idempotent PUT/PATCH.
 set -euo pipefail
@@ -96,11 +97,12 @@ echo "   main: $reviews_msg, $checks_msg, no force push"
 echo "==> Environments"
 REVIEWER_ID=$(gh api "users/$REVIEWER" --jq .id)
 VISIBILITY=$(gh api "repos/$REPO" --jq .visibility)
-GATE4_OFF=false
+UNPROTECTED=" "   # environments created without their protection rules
 if [[ "$VISIBILITY" == "private" ]]; then
   echo "   ⚠️  $REPO is $VISIBILITY. Required reviewers (Gate 4) and wait timers only work on"
   echo "       public repos or with GitHub Enterprise. On Free, Pro or Team, production deploys"
-  echo "       will NOT wait for approval and the post-deploy report will not wait 30 minutes."
+  echo "       and preview deploys of AI branches will NOT wait for approval, and the post-deploy"
+  echo "       report will not wait 30 minutes."
 fi
 gh api -X PUT "repos/$REPO/environments/preview" >/dev/null
 gh api -X PUT "repos/$REPO/environments/staging" --input - >/dev/null <<JSON
@@ -122,7 +124,7 @@ put_env() {  # put_env <name> <json-with-rules> <json-without-rules>
     echo "   ✗ GitHub rejected the protection rules for '$1' on this private repo:" >&2
     echo "     $err" >&2
     echo "     On GitHub Free/Pro/Team this is the plan limit. Check the reviewer name first; if it is" >&2
-    echo "     the plan, re-run with --allow-unprotected-prod to create '$1' without Gate 4." >&2
+    echo "     the plan, re-run with --allow-unprotected-prod to create '$1' without its rules." >&2
     exit 1
   fi
   if [[ "$VISIBILITY" == "private" && "$err" == *"HTTP 422"* ]]; then
@@ -133,7 +135,7 @@ put_env() {  # put_env <name> <json-with-rules> <json-without-rules>
       exit 1
     fi
     echo "       Created '$1' without them."
-    GATE4_OFF=true
+    UNPROTECTED="$UNPROTECTED$1 "
     return 1
   fi
   echo "   ✗ Could not create environment '$1' with its protection rules:" >&2
@@ -154,17 +156,31 @@ fi
 if put_env post-deploy-report "{ \"wait_timer\": 30, $BRANCHES }" "{ $BRANCHES }"; then
   echo "   post-deploy-report: 30 min wait timer before the AI health report"
 fi
+# Preview deploys of ai/* branches run AI-written code (pnpm install, deploy.sh, the
+# build) with PREVIEW_DEPLOY_TOKEN, so a person approves each one (preview.yml picks
+# this environment for ai/* branches). No branch policy: previews deploy PR branches.
+if put_env preview-ai \
+  "{ \"wait_timer\": 0, \"prevent_self_review\": false, \"reviewers\": [ { \"type\": \"User\", \"id\": $REVIEWER_ID } ] }" \
+  "{}"; then
+  echo "   preview-ai: preview deploys of ai/* branches wait for approval from @$REVIEWER"
+fi
 
 echo "==> Repo settings"
 gh api -X PATCH "repos/$REPO" -f delete_branch_on_merge=true -f allow_squash_merge=true \
   -f allow_merge_commit=false -f allow_rebase_merge=false >/dev/null
 
 echo
-if [[ "$GATE4_OFF" == true ]]; then
+if [[ "$UNPROTECTED" == *" production "* ]]; then
   echo "⚠️  Gate 4 (approval before production) is OFF: production was created without reviewers."
   echo "   See docs/getting-started.md step 0 before setting PRODUCTION_DEPLOY_TOKEN."
   echo
-elif [[ "$VISIBILITY" == "private" ]]; then
+fi
+if [[ "$UNPROTECTED" == *" preview-ai "* ]]; then
+  echo "⚠️  Approval of AI preview deploys is OFF: preview-ai was created without reviewers."
+  echo "   AI-written code would run with PREVIEW_DEPLOY_TOKEN. Do not set that secret in preview-ai."
+  echo
+fi
+if [[ "$UNPROTECTED" == " " && "$VISIBILITY" == "private" ]]; then
   echo "⚠️  Gate 4 may NOT be enforced: GitHub accepts the reviewer on private Free/Pro/Team repos"
   echo "   but only enforces it on Enterprise. See docs/getting-started.md step 0."
   echo
@@ -174,7 +190,8 @@ echo "  1. Install the Claude GitHub App:  https://github.com/apps/claude"
 echo "  2. Add ONE Claude credential (AI jobs skip with a warning until one is set):"
 echo "       gh secret set ANTHROPIC_API_KEY --repo $REPO         # Console API key, billed per token"
 echo "       gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo $REPO   # or: subscription token from 'claude setup-token'"
-echo "     (+ PREVIEW_DEPLOY_TOKEN, STAGING_DEPLOY_TOKEN, PRODUCTION_DEPLOY_TOKEN in their environments,"
+echo "     (+ PREVIEW_DEPLOY_TOKEN in preview and preview-ai, STAGING_DEPLOY_TOKEN, PRODUCTION_DEPLOY_TOKEN"
+echo "        in their environments,"
 echo "        SENTRY_READ_TOKEN for post-deploy reports)"
 echo "  3. Replace @your-github-username in .github/CODEOWNERS"
 echo "  4. Implement scripts/deploy.sh for your hosting provider"

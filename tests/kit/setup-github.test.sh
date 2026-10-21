@@ -40,6 +40,8 @@ check "no package.json: CI not required"   nopkg $P '.required_status_checks == 
 check "production needs a reviewer"        team environments/production '.reviewers | length == 1'
 check "production: protected branches only" team environments/production '.deployment_branch_policy.protected_branches'
 check "post-deploy-report waits 30 min"    team environments/post-deploy-report '.wait_timer == 30'
+check "preview-ai needs a reviewer"        team environments/preview-ai '.reviewers | length == 1'
+check "preview-ai: any branch (PR previews)" team environments/preview-ai '.deployment_branch_policy == null'
 
 # Plan limits: a private repo gets a warning; rejected rules still create the environment.
 FAKE_VISIBILITY=private run private 1 --solo
@@ -54,6 +56,9 @@ check "rejected rules: production still created" rejected environments/productio
 check "rejected rules: report env still created" rejected environments/post-deploy-report '.wait_timer == null'
 if grep -q "rejected the protection rules for 'production'" "$tmp/rejected.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ rejected rules should be reported"; fi
 if grep -q "requires approval from" "$tmp/rejected.out"; then fail=$((fail+1)); echo "   ✗ must not claim Gate 4 when rules were rejected"; else pass=$((pass+1)); fi
+check "rejected rules: preview-ai still created" rejected environments/preview-ai '.reviewers == null'
+if grep -q "Approval of AI preview deploys is OFF" "$tmp/rejected.out"; then pass=$((pass+1)); else fail=$((fail+1)); echo "   ✗ with the flag, the end banner should say AI preview approval is OFF"; fi
+if grep -q "wait for approval from" "$tmp/rejected.out"; then fail=$((fail+1)); echo "   ✗ must not claim preview-ai approval when rules were rejected"; else pass=$((pass+1)); fi
 # expect_stop <name> <description> [env...]: the script must exit non-zero
 expect_stop() {  # expect_stop <name> <description> [VAR=value...] [-- extra script args]
   local name="$1" desc="$2"; shift 2
