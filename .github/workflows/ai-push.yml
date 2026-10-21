@@ -1,0 +1,282 @@
+# Trusted push job (#12). The only place where AI-made commits are pushed.
+#
+# A Claude job commits locally and uploads a bundle as an artifact (make-bundle.sh).
+# This reusable workflow then, in a fresh job that never runs Claude:
+#   1. checks out the DEFAULT branch (never the AI's tree) without credentials, and runs
+#      only scripts from that checkout, copied to RUNNER_TEMP first
+#   2. inspects the untrusted bundle (inspect-bundle.sh): branch name, one head, history,
+#      size, scratch files, workflow and high-risk paths
+#   3. refuses with a fixed explanation when the run may not push:
+#        - pr mode: fork, non-ai branch, plain issue
+#        - any mode: the commits change .github/workflows/* (workflow files run with the
+#          repo's secrets, so the AI never pushes them; a human edits workflows)
+#        - any mode, even with an approved plan: the commits change the AI's own config
+#          or this push path (.claude/**, CLAUDE.md, scripts/ai-push/**)
+#        - pipeline mode: high-risk paths without a human-approved plan (Gate 1b, A5);
+#          deny by default, only docs == plan-approved may push them
+#   4. for the AI pipeline, saves the approved spec and plan into the same PR
+#   5. creates a short-lived push token (GitHub App, if configured, without the
+#      workflows permission) in one step and uses it only in the next: push
+#      (fast-forward, lease) and open or update the PR
+#
+# Inputs that decide WHERE and FROM WHAT to push (base_sha, expected_old_sha,
+# expected_branch, pushable) must come from trusted event data or from steps that ran
+# before Claude, never from steps after Claude.
+name: AI push (trusted)
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "pipeline (AI pipeline, branch ai/<issue>-*) or pr (@claude on a PR)"
+        type: string
+        required: true
+      number:
+        description: "Issue number (pipeline) or PR number (pr)"
+        type: number
+        required: true
+      base_sha:
+        description: "Commit the Claude job started from (trusted)"
+        type: string
+        required: true
+      expected_old_sha:
+        description: "Remote tip of the branch when the Claude job started; empty if it did not exist"
+        type: string
+        default: ""
+      expected_branch:
+        description: "pr mode: the PR head branch"
+        type: string
+        default: ""
+      artifact:
+        description: "Name of the artifact uploaded by the Claude job"
+        type: string
+        required: true
+      docs:
+        # Required, no default: a caller that forgets it must not silently skip Gate 1b.
+        description: "pipeline: plan-unapproved (plan-and-build) | plan-approved (build-high-risk); pr: none"
+        type: string
+        required: true
+      pushable:
+        description: "pr mode: false for forks, non-ai branches and plain issues; pipeline: true"
+        type: boolean
+        required: true
+      reason:
+        description: "Why it is not pushable: fork | not-ai-branch | issue"
+        type: string
+        default: ""
+    secrets:
+      AI_PUSH_APP_PRIVATE_KEY:
+        required: false
+    outputs:
+      pr_url:
+        description: "URL of the opened or updated PR (empty if nothing was pushed)"
+        value: ${{ jobs.push.outputs.pr_url }}
+      pushed:
+        description: "true if commits were pushed"
+        value: ${{ jobs.push.outputs.pushed }}
+
+permissions: {}
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # One push per issue or PR at a time; a second run waits instead of racing
+    # gh pr create or the lease.
+    concurrency:
+      group: ai-push-${{ github.repository }}-${{ inputs.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      pr_url: ${{ steps.push.outputs.pr_url }}
+      pushed: ${{ steps.push.outputs.pushed }}
+    env:
+      HAS_PUSH_APP: ${{ vars.AI_PUSH_APP_CLIENT_ID != '' && secrets.AI_PUSH_APP_PRIVATE_KEY != '' }}
+      MODE: ${{ inputs.mode }}
+      NUMBER: ${{ inputs.number }}
+      BASE_SHA: ${{ inputs.base_sha }}
+      EXPECTED_OLD: ${{ inputs.expected_old_sha }}
+      EXPECTED_BRANCH: ${{ inputs.expected_branch }}
+      DOCS: ${{ inputs.docs }}
+      PUSHABLE: ${{ inputs.pushable }}
+      REASON: ${{ inputs.reason }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - name: Check inputs
+        run: |
+          die() { echo "::error::$1"; exit 1; }
+          [[ "$DEFAULT_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || die "the default branch is unknown; the checkout would not be trusted"
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "base_sha must be a full SHA"
+          [[ -z "$EXPECTED_OLD" || "$EXPECTED_OLD" =~ ^[0-9a-f]{40}$ ]] || die "expected_old_sha must be a full SHA"
+          case "$MODE" in
+            pipeline)
+              [[ "$DOCS" == plan-unapproved || "$DOCS" == plan-approved ]] || die "pipeline mode needs docs plan-unapproved or plan-approved"
+              [[ "$PUSHABLE" == true ]] || die "pipeline mode is always pushable"
+              [[ -z "$EXPECTED_OLD" || "$EXPECTED_OLD" == "$BASE_SHA" ]] || die "pipeline: a resume starts from the branch tip, so expected_old_sha must equal base_sha"
+              ;;
+            pr)
+              [[ "$DOCS" == none ]] || die "docs are only saved in pipeline mode"
+              if [[ "$PUSHABLE" == true ]]; then
+                [[ -n "$EXPECTED_BRANCH" ]] || die "pr mode needs expected_branch"
+                [[ "$EXPECTED_OLD" == "$BASE_SHA" ]] || die "pr mode: expected_old_sha must equal base_sha (the PR head)"
+              else
+                [[ "$REASON" =~ ^(fork|not-ai-branch|issue)$ ]] || die "not pushable needs reason fork, not-ai-branch or issue"
+              fi
+              ;;
+            *) die "mode must be pipeline or pr" ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Snapshot trusted scripts
+        # From the default-branch checkout only; nothing from the artifact is ever executed.
+        run: |
+          mkdir -p "$RUNNER_TEMP/trusted"
+          cp scripts/ai-push/*.sh .github/labeler.yml .github/pull_request_template.md "$RUNNER_TEMP/trusted/"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/incoming
+
+      - name: Inspect the bundle
+        id: inspect
+        run: |
+          inspect_mode="$MODE"
+          if [[ "$MODE" == pr && "$PUSHABLE" != true ]]; then inspect_mode=none; fi
+          bash "$RUNNER_TEMP/trusted/inspect-bundle.sh" --mode "$inspect_mode" \
+            --number "$NUMBER" --base "$BASE_SHA" --in "$RUNNER_TEMP/incoming" \
+            --default-branch "$DEFAULT_BRANCH" --labeler "$RUNNER_TEMP/trusted/labeler.yml" \
+            ${EXPECTED_BRANCH:+--expected-branch "$EXPECTED_BRANCH"}
+
+      - name: Refuse (not pushable)
+        if: inputs.mode == 'pr' && !inputs.pushable && steps.inspect.outputs.commits != '0' && steps.inspect.outputs.commits != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash "$RUNNER_TEMP/trusted/refuse-push.sh" --number "$NUMBER" --reason "$REASON"
+
+      - name: Gate (workflow files, agent config, high risk without plan approval)
+        id: gate
+        # Every later step needs refused == 'false', which only this step sets: if it is
+        # skipped or fails, nothing is fetched, no token is created and nothing is pushed.
+        if: >-
+          steps.inspect.outputs.commits != '0' && steps.inspect.outputs.commits != ''
+          && (inputs.mode == 'pipeline' || inputs.pushable)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOWS: ${{ steps.inspect.outputs.workflows }}
+          AGENT_CONFIG: ${{ steps.inspect.outputs.agent_config }}
+          HIGH_RISK: ${{ steps.inspect.outputs.high_risk }}
+        run: |
+          [[ "$WORKFLOWS" =~ ^[0-9]+$ && "$AGENT_CONFIG" =~ ^[0-9]+$ && "$HIGH_RISK" =~ ^(true|false)$ ]] \
+            || { echo "::error::inspect did not report workflows/agent_config/high_risk"; exit 1; }
+          reason=""
+          if (( WORKFLOWS > 0 )); then
+            reason=workflows
+          elif (( AGENT_CONFIG > 0 )); then
+            reason=agent-config
+          elif [[ "$MODE" == pipeline && "$HIGH_RISK" == true && "$DOCS" != plan-approved ]]; then
+            reason=high-risk   # deny by default (A5): only an approved plan may push high-risk paths
+          fi
+          if [[ -n "$reason" ]]; then
+            bash "$RUNNER_TEMP/trusted/refuse-push.sh" --number "$NUMBER" --reason "$reason"
+            echo "refused=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "refused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch the approved spec and plan
+        if: inputs.mode == 'pipeline' && steps.gate.outputs.refused == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOT: ${{ vars.AI_REVIEW_BOT || 'claude[bot]' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/docs"
+          T="$RUNNER_TEMP/trusted"
+          bash "$T/fetch-approved-docs.sh" --issue "$NUMBER" --stage spec --bot "$BOT" --out "$RUNNER_TEMP/docs/spec.md" \
+            --approved-by-label approved:spec --window-label ai:spec
+          if [[ "$DOCS" == plan-approved ]]; then
+            bash "$T/fetch-approved-docs.sh" --issue "$NUMBER" --stage plan --bot "$BOT" --out "$RUNNER_TEMP/docs/plan.md" \
+              --approved-by-label approved:plan --window-label approved:spec
+          else
+            bash "$T/fetch-approved-docs.sh" --issue "$NUMBER" --stage plan --bot "$BOT" --out "$RUNNER_TEMP/docs/plan.md" \
+              --after-label approved:spec
+          fi
+
+      - name: Warn when no push App is configured
+        if: env.HAS_PUSH_APP != 'true'
+        run: echo "::warning::No push App configured (vars.AI_PUSH_APP_CLIENT_ID + secrets.AI_PUSH_APP_PRIVATE_KEY). Pushing with GITHUB_TOKEN; CI and AI review will NOT start on the new commits."
+
+      - name: Create push token
+        id: app-token
+        # No permission-workflows: the gate refuses workflow changes, and without that
+        # permission GitHub rejects them too.
+        if: env.HAS_PUSH_APP == 'true' && steps.gate.outputs.refused == 'false'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AI_PUSH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AI_PUSH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push branch and open PR
+        id: push
+        # The only step that sees the push token.
+        if: steps.gate.outputs.refused == 'false'
+        env:
+          PUSH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          # Comments carry AI-chosen file names: post them as github-actions[bot], which
+          # cannot trigger @-mention workflows.
+          COMMENT_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.inspect.outputs.branch }}
+          TIP: ${{ steps.inspect.outputs.tip }}
+          COMMITS: ${{ steps.inspect.outputs.commits }}
+          HIGH_RISK: ${{ steps.inspect.outputs.high_risk }}
+        run: |
+          T="$RUNNER_TEMP/trusted"
+          tip="$TIP"
+          if [[ "$MODE" == pipeline ]]; then
+            name="${BRANCH#ai/}"
+            tip="$(bash "$T/commit-docs.sh" --tip "$TIP" --name "$name" --spec "$RUNNER_TEMP/docs/spec.md" --plan "$RUNNER_TEMP/docs/plan.md")"
+          fi
+          bash "$T/push-branch.sh" --mode "$MODE" --branch "$BRANCH" --tip "$tip" ${EXPECTED_OLD:+--expected-old "$EXPECTED_OLD"}
+
+          footer="$RUNNER_TEMP/footer.md"
+          bt='`'
+          {
+            echo "**Pushed by the trusted AI push job** (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Branch | ${bt}${BRANCH}${bt} |"
+            echo "| Commits from the AI | $COMMITS (${bt}${BASE_SHA:0:7}..${TIP:0:7}${bt}) |"
+            echo "| High-risk paths | $HIGH_RISK |"
+            echo
+            echo "Files changed:"
+            echo
+            # File names come from the AI's commits: drop backticks and control characters
+            # so a name cannot leave its code span and fake text in this trusted section.
+            total=0
+            while IFS= read -r -d '' f; do
+              total=$((total + 1))
+              (( total > 100 )) && continue
+              f="$(printf '%s' "$f" | tr -d '\000-\037\177`')"
+              printf -- '- %s%s%s\n' "$bt" "$f" "$bt"
+            done < <(git -c core.quotePath=false diff --no-renames --name-only -z "$BASE_SHA" "$tip")
+            if (( total > 100 )); then echo "- …and $((total - 100)) more"; fi
+          } >"$footer"
+          if [[ "$MODE" == pipeline ]]; then
+            bash "$T/open-pr.sh" --branch "$BRANCH" --base "$DEFAULT_BRANCH" --issue "$NUMBER" \
+              --range "$BASE_SHA..$TIP" --footer "$footer" --body-in "$RUNNER_TEMP/incoming/pr-body.md" --repo .
+          else
+            GH_TOKEN="$COMMENT_TOKEN" gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$footer"
+            echo "pr_url=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/$NUMBER" >> "$GITHUB_OUTPUT"
+          fi

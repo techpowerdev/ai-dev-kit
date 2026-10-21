@@ -399,6 +399,16 @@ for sub in diff log; do
     --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
   out_has "it says git $sub failed" "(git $sub failed)"
 done
+# agent config and the push scripts are counted separately (refused in every mode)
+world; claude_commit ai/12-cfg .claude/commands/review.md; claude_commit ai/12-cfg CLAUDE.md
+claude_commit ai/12-cfg scripts/ai-push/lib.sh; claude_commit ai/12-cfg src/app.ts
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect reports agent config changes" inspect --mode pipeline --number 12
+[[ "$(outv agent_config)" == 3 ]] && ok || bad "agent_config counts .claude/, CLAUDE.md and scripts/ai-push/ (got $(outv agent_config))"
+world; claude_commit ai/12-ok src/CLAUDE.md.txt; claude_commit ai/12-ok docs/scripts/ai-push/x.md
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect with look-alike paths" inspect --mode pipeline --number 12
+[[ "$(outv agent_config)" == 0 ]] && ok || bad "look-alike paths are not agent config (got $(outv agent_config))"
 # one-line labeler forms fail closed
 printf '"risk:high":\n  - any-glob-to-any-file: "**/auth/**"\n' >"$W/oneline.yml"
 expect_fail "a one-line labeler entry fails closed" inspect --mode pipeline --number 12 --labeler "$W/oneline.yml"

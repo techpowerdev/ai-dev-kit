@@ -67,6 +67,59 @@ expect "/plan comments start with the marker the result check skips" grep -q 'mu
 expect "/spec comments start with the marker the result check skips" grep -q 'must start with the line `# Spec: <title>`' .claude/commands/spec.md
 expect "/implement never opens a second PR on a resumed run" grep -q 'do not create another' .claude/commands/implement.md
 expect "/plan always posts the plan on the issue" grep -q 'whatever the risk level' .claude/commands/plan.md
+# ---- ai-push.yml (#12): the trusted push job
+AP=.github/workflows/ai-push.yml
+push_step="$(awk '/^      - name: Push branch and open PR$/{f=1} f && /^      - / && !/Push branch and open PR/{f=0} f' "$AP")"
+expect "ai-push: the app token is used in two env lines" test "$(grep -c 'steps.app-token.outputs.token' "$AP")" -eq 2
+expect "ai-push: the app token is used only in the push step" test "$(grep -c 'steps.app-token.outputs.token' <<<"$push_step")" -eq 2
+expect "ai-push: the push step is the only step with PUSH_TOKEN" test "$(grep -c 'PUSH_TOKEN:' "$AP")" -eq 1
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: checks out the default branch" grep -q 'ref: ${{ github.event.repository.default_branch }}' "$AP"
+expect "ai-push: the checkout keeps no credentials" grep -q 'persist-credentials: false' "$AP"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+direct_scripts="$(grep -nE 'bash (scripts/|"?\./|"?\$GITHUB_WORKSPACE)' "$AP" || true)"
+expect "ai-push: runs scripts only from the trusted snapshot: $direct_scripts" none "$direct_scripts"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+from_artifact="$(grep -nE '(bash|source|\.) +"?\$RUNNER_TEMP/incoming' "$AP" || true)"
+expect "ai-push: never executes anything from the artifact: $from_artifact" none "$from_artifact"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: inspect always gets the labeler" grep -q -- '--labeler "$RUNNER_TEMP/trusted/labeler.yml"' "$AP"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: App token uses client-id (A1)" grep -q 'client-id: ${{ vars.AI_PUSH_APP_CLIENT_ID }}' "$AP"
+expect "ai-push: no workflow-level permissions" grep -qx 'permissions: {}' "$AP"
+# the gate: only it sets refused=false, and every step after it requires exactly that
+step_if() { awk -v n="$1" '$0 ~ "^      - name: "n"$"{f=1;next} f && /^      - /{exit} f && /if:/{p=1} p && /^        [a-z-]+:/ && !/if:/{exit} p' "$AP"; }
+for s in "Fetch the approved spec and plan" "Create push token" "Push branch and open PR"; do
+  expect "ai-push: '$s' runs only when the gate said refused == false" grep -qF "steps.gate.outputs.refused == 'false'" <<<"$(step_if "$s")"
+done
+expect "ai-push: refused=false is set in one place" test "$(grep -c 'refused=false' "$AP")" -eq 1
+expect "ai-push: the gate refuses any workflow change" grep -q 'reason=workflows' "$AP"
+expect "ai-push: the gate refuses agent config in every mode" grep -q 'reason=agent-config' "$AP"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: the gate fails when inspect did not report agent_config" grep -qF '"$AGENT_CONFIG" =~ ^[0-9]+$' "$AP"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: the pr-mode report is posted as github-actions[bot]" grep -qF 'GH_TOKEN="$COMMENT_TOKEN" gh pr comment' "$AP"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: high risk in pipeline is denied unless the plan was approved" grep -qF '"$MODE" == pipeline && "$HIGH_RISK" == true && "$DOCS" != plan-approved' "$AP"
+wf_perm="$(grep -nE '^ *permission-workflows:' "$AP" || true)"
+expect "ai-push: the push token never gets the workflows permission: $wf_perm" none "$wf_perm"
+input_block() { awk -v n="$1" '$0 ~ "^      "n":$"{f=1;next} f && /^      [a-z_]+:$/{exit} f' "$AP"; }
+for i in docs pushable; do
+  expect "ai-push: input '$i' is required (no fail-open default)" grep -q 'required: true' <<<"$(input_block "$i")"
+done
+# shellcheck disable=SC2016  # literal ${{ to match, not an expansion
+expect "ai-push: one push per issue/PR at a time" grep -qF 'group: ai-push-${{ github.repository }}-${{ inputs.number }}' "$AP"
+callers_inherit="$(grep -l 'uses: ./.github/workflows/ai-push.yml' .github/workflows/*.yml | xargs -r grep -l 'secrets: inherit' || true)"
+expect "ai-push callers pass secrets explicitly, never 'secrets: inherit': $callers_inherit" none "$callers_inherit"
+# shellcheck disable=SC2016  # literal ${{ to match, not an expansion
+# every run script, single-line or block (by indentation), with its line number
+# shellcheck disable=SC2016  # literal ${{ to match, not an expansion
+inline_inputs="$(awk '
+  r && (/^[[:space:]]*$/ || match($0, /^ */) && RLENGTH > ind) { print NR": "$0; next }
+  { r=0 }
+  /^ *run:/ { match($0, /^ */); ind=RLENGTH; if ($0 ~ /run: *[|>]/) r=1; else print NR": "$0 }
+' "$AP" | grep '\${{' || true)"
+expect "ai-push: no \${{ }} expressions inside run scripts: $inline_inputs" none "$inline_inputs"
 expect "claude-review.yml checks that the review was posted" grep -q 'check-review-posted.sh' .github/workflows/claude-review.yml
 # shellcheck disable=SC2016  # backticks here are literal Markdown, not command substitution
 expect "/review posts the comment from a file, not inline --body" grep -q -- '--body-file .ai-review.md' .claude/commands/review.md

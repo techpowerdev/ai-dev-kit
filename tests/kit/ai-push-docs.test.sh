@@ -277,6 +277,9 @@ has "fork reason text"          "$FAKE_GH_LOG" "fork"
 expect_ok "refuse: high-risk" bash "$S/refuse-push.sh" --number 12 --reason high-risk
 has "high-risk reason text" "$FAKE_GH_LOG" "approved:plan"
 expect_ok "refuse: issue" bash "$S/refuse-push.sh" --number 12 --reason issue
+expect_ok "refuse: workflows" bash "$S/refuse-push.sh" --number 12 --reason workflows
+expect_ok "refuse: agent-config" bash "$S/refuse-push.sh" --number 12 --reason agent-config
+has "the workflows refusal names the folder" "$FAKE_GH_LOG" ".github/workflows/"
 expect_ok "refuse: not-ai-branch" bash "$S/refuse-push.sh" --number 5 --reason not-ai-branch
 has   "not-ai-branch reason text" "$FAKE_GH_LOG" "ai/<issue>-<slug>"
 lacks "no @-mention that could trigger the @claude workflow" "$FAKE_GH_LOG" "@claude"
