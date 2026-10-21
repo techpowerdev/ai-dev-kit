@@ -104,9 +104,12 @@ if [[ "$mode" == pr ]]; then
 fi
 if [[ "$mode" == pipeline ]]; then
   resume_tip="$(ai_git rev-parse --verify --quiet "refs/remotes/origin/$branch^{commit}" || true)"
-  if ! ai_git merge-base --is-ancestor "$base" "refs/remotes/origin/$default_branch" 2>/dev/null \
-     && [[ "$base" != "$resume_tip" ]]; then
-    ai_fail "The base is neither on $default_branch nor the current tip of origin/$branch."
+  if [[ -n "$resume_tip" ]]; then
+    # The branch exists: only a resume from its exact tip may push to it (A3).
+    [[ "$base" == "$resume_tip" ]] \
+      || ai_fail "origin/$branch exists, so the base must be its tip ($resume_tip) to resume it; got $base."
+  elif ! ai_git merge-base --is-ancestor "$base" "refs/remotes/origin/$default_branch" 2>/dev/null; then
+    ai_fail "The base is not on $default_branch."
   fi
 fi
 
@@ -122,9 +125,13 @@ commits="$(ai_git rev-list --count "$base..$tip")"
 # Net diff plus every path any commit in the range touched (merges per parent): a merge
 # that brings in main and then reverts a fix in a guarded path shows up even when the
 # net diff hides it.
-changed="$( { ai_git -c core.quotePath=false diff --no-renames --name-only -z "$base" "$tip"
-              ai_git -c core.quotePath=false log -m --no-renames --name-only -z --format= "$base..$tip"; } \
-            | tr '\0' '\n' | grep -v '^$' | sort -u || true)"
+# Each git call fails the script on error (pipefail), so a git error can never read
+# as "no paths changed" and turn the high-risk gate open.
+net_paths="$(ai_git -c core.quotePath=false diff --no-renames --name-only -z "$base" "$tip" | tr '\0' '\n')" \
+  || ai_fail "Could not list the changed paths (git diff failed)."
+history_paths="$(ai_git -c core.quotePath=false log -m --no-renames --name-only -z --format= "$base..$tip" | tr '\0' '\n')" \
+  || ai_fail "Could not list the paths touched in history (git log failed)."
+changed="$(printf '%s\n%s\n' "$net_paths" "$history_paths" | { grep -v '^$' || true; } | sort -u)"
 scratch="$(printf '%s\n' "$changed" | grep -E '(^|/)\.ai-(pr-body|comment|review)\.md$' || true)"
 [[ -z "$scratch" ]] || ai_fail "AI scratch files were committed: $(printf '%s' "$scratch" | tr '\n' ' ')"
 workflows="$(printf '%s\n' "$changed" | grep -c '^\.github/workflows/' || true)"

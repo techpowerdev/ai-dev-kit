@@ -147,7 +147,8 @@ for a in "\$@"; do [[ "\$a" == push ]] && printf '%s|%s|%s\n' "\${GIT_CONFIG_COU
 exec "$real_git" "\$@"
 WRAP
 chmod +x "$W/wrap/git"
-rm -f "$W/claude/.ai-pr-body.md"; claude_commit ai/12-add-thing src/c.txt; bundle --mode pipeline --issue 12 >/dev/null
+rm -f "$W/claude/.ai-pr-body.md"; claude_commit ai/12-add-thing src/c.txt
+BASE="$TIP"; bundle --mode pipeline --issue 12 >/dev/null; g "$W/trusted" fetch -q origin  # a resume: base = the pushed tip
 expect_ok "inspect the second round" inspect --mode pipeline --number 12; TIP2="$(outv tip)"
 PATH="$W/wrap:$PATH" PUSH_TOKEN=FAKE_TOKEN_123 bash "$S/push-branch.sh" --repo "$W/trusted" --mode pipeline --branch ai/12-add-thing --tip "$TIP2" --expected-old "$TIP" >"$tmp/last.out" 2>&1 || true
 expected_hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' FAKE_TOKEN_123 | base64 | tr -d '\n')"
@@ -358,6 +359,46 @@ g "$W/claude" merge -q --no-edit main; echo "secure" >"$W/claude/apps/api/auth/g
 bundle --mode pipeline --issue 12 >/dev/null; trusted
 expect_ok "inspect a history that touched auth but nets to zero" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
 [[ "$(outv high_risk)" == true ]] && ok || bad "a path touched in history counts even when the net diff is empty"
+# review of #20: an existing ai branch can only be resumed from its exact tip
+world; claude_commit ai/12-x f1; g "$W/claude" push -q origin ai/12-x
+REMOTE_X="$(remote_sha ai/12-x)"
+g "$W/claude" checkout -q -B ai/12-x main; echo z >"$W/claude/z.txt"; g "$W/claude" add -A; g "$W/claude" commit -qm "fresh start"
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_fail "pipeline: a base on main is refused when origin/ai/12-x already exists" inspect --mode pipeline --number 12
+out_has "it names the tip to resume from" "$REMOTE_X"
+# push-branch checks fast-forward itself: a matching lease is not enough
+TIP_NFF="$(g "$W/claude" rev-parse ai/12-x)"; g "$W/claude" push -q origin "$TIP_NFF:refs/heads/side"; trusted
+expect_fail "push: a tip that does not descend from the remote is refused even with a matching lease" \
+  push --mode pipeline --branch ai/12-x --tip "$TIP_NFF" --expected-old "$REMOTE_X"
+out_has "it says not a fast-forward" "not a fast-forward"
+[[ "$(remote_sha ai/12-x)" == "$REMOTE_X" ]] && ok || bad "the remote is unchanged after refusing a rewrite"
+# the old remote tip must be known locally, or the ancestry cannot be checked
+world; trusted; claude_commit ai/12-x f1; g "$W/claude" push -q origin ai/12-x; REMOTE_X="$(remote_sha ai/12-x)"
+expect_fail "push: an old remote tip missing from the trusted repo fails closed" \
+  push --mode pipeline --branch ai/12-x --tip "$BASE" --expected-old "$REMOTE_X"
+out_has "it says the tip is not in the repo" "not in this repo"
+[[ "$(remote_sha ai/12-x)" == "$REMOTE_X" ]] && ok || bad "the remote is unchanged"
+# a git error while listing paths fails instead of reporting "no high-risk paths"
+world; claude_commit ai/12-x apps/api/auth/guard.ts; bundle --mode pipeline --issue 12 >/dev/null; trusted
+mkdir -p "$W/gitwrap"; real_git="$(command -v git)"
+# fails "git <FAIL_SUB> ... --name-only ..." and passes everything else through
+cat >"$W/gitwrap/git" <<WRAP
+#!/usr/bin/env bash
+sub=""; name_only=""
+for a in "\$@"; do
+  [[ -z "\$sub" && ( "\$a" == diff || "\$a" == log ) ]] && sub="\$a"
+  [[ "\$a" == --name-only ]] && name_only=1
+done
+if [[ -n "\$name_only" && "\$sub" == "\${FAIL_SUB:-}" ]]; then echo "fatal: injected" >&2; exit 128; fi
+exec "$real_git" "\$@"
+WRAP
+chmod +x "$W/gitwrap/git"
+for sub in diff log; do
+  expect_fail "inspect: a failing git $sub fails closed" env PATH="$W/gitwrap:$PATH" FAIL_SUB="$sub" \
+    GITHUB_OUTPUT="$W/gh_out" bash "$S/inspect-bundle.sh" --repo "$W/trusted" --in "$OUT" --base "$BASE" \
+    --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+  out_has "it says git $sub failed" "(git $sub failed)"
+done
 # one-line labeler forms fail closed
 printf '"risk:high":\n  - any-glob-to-any-file: "**/auth/**"\n' >"$W/oneline.yml"
 expect_fail "a one-line labeler entry fails closed" inspect --mode pipeline --number 12 --labeler "$W/oneline.yml"
