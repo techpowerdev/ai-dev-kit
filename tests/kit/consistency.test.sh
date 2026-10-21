@@ -87,6 +87,23 @@ expect "ai-push: inspect always gets the labeler" grep -q -- '--labeler "$RUNNER
 # shellcheck disable=SC2016  # literal text to match, not an expansion
 expect "ai-push: App token uses client-id (A1)" grep -q 'client-id: ${{ vars.AI_PUSH_APP_CLIENT_ID }}' "$AP"
 expect "ai-push: no workflow-level permissions" grep -qx 'permissions: {}' "$AP"
+# the gate: only it sets refused=false, and every step after it requires exactly that
+step_if() { awk -v n="$1" '$0 ~ "^      - name: "n"$"{f=1;next} f && /^      - /{exit} f && /if:/{p=1} p && /^        [a-z-]+:/ && !/if:/{exit} p' "$AP"; }
+for s in "Fetch the approved spec and plan" "Create push token" "Push branch and open PR"; do
+  expect "ai-push: '$s' runs only when the gate said refused == false" grep -qF "steps.gate.outputs.refused == 'false'" <<<"$(step_if "$s")"
+done
+expect "ai-push: refused=false is set in one place" test "$(grep -c 'refused=false' "$AP")" -eq 1
+expect "ai-push: the gate refuses any workflow change" grep -q 'reason=workflows' "$AP"
+# shellcheck disable=SC2016  # literal text to match, not an expansion
+expect "ai-push: high risk in pipeline is denied unless the plan was approved" grep -qF '"$MODE" == pipeline && "$HIGH_RISK" == true && "$DOCS" != plan-approved' "$AP"
+wf_perm="$(grep -nE '^ *permission-workflows:' "$AP" || true)"
+expect "ai-push: the push token never gets the workflows permission: $wf_perm" none "$wf_perm"
+input_block() { awk -v n="$1" '$0 ~ "^      "n":$"{f=1;next} f && /^      [a-z_]+:$/{exit} f' "$AP"; }
+for i in docs pushable; do
+  expect "ai-push: input '$i' is required (no fail-open default)" grep -q 'required: true' <<<"$(input_block "$i")"
+done
+# shellcheck disable=SC2016  # literal ${{ to match, not an expansion
+expect "ai-push: one push per issue/PR at a time" grep -qF 'group: ai-push-${{ github.repository }}-${{ inputs.number }}' "$AP"
 callers_inherit="$(grep -l 'uses: ./.github/workflows/ai-push.yml' .github/workflows/*.yml | xargs -r grep -l 'secrets: inherit' || true)"
 expect "ai-push callers pass secrets explicitly, never 'secrets: inherit': $callers_inherit" none "$callers_inherit"
 # shellcheck disable=SC2016  # literal ${{ to match, not an expansion

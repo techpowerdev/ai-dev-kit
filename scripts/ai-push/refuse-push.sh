@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: refuse-push.sh --number N --reason fork|not-ai-branch|issue|high-risk [--slug OWNER/REPO]
+# Usage: refuse-push.sh --number N --reason fork|not-ai-branch|issue|high-risk|workflows [--slug OWNER/REPO]
 # Env: GH_TOKEN — must be github.token (comments then come from github-actions[bot],
 #      which cannot trigger @-mention workflows), GITHUB_REPOSITORY (or --slug)
 #
@@ -27,6 +27,7 @@ case "$reason" in
   not-ai-branch) why="branch ของ PR นี้ไม่ได้ชื่อ \`ai/<issue>-<slug>\` AI push ได้เฉพาะ branch ของ AI เพื่อไม่ไปแก้ branch ของคน" ;;
   issue)         why="การ mention Claude บน issue ธรรมดาทำได้แค่ตอบ comment (decision 8.1) ถ้าต้องการให้ AI เขียนโค้ด ให้ใช้ label \`ai:spec\` แทน" ;;
   high-risk)     why="การเปลี่ยนแปลงแตะ path ความเสี่ยงสูง (ตาม \`.github/labeler.yml\`) แต่ issue ยังไม่ผ่าน Gate 1b ให้คนอนุมัติ plan ด้วย label \`approved:plan\` แล้วรันใหม่" ;;
+  workflows)     why="การเปลี่ยนแปลงแก้ไฟล์ใน \`.github/workflows/\` ไฟล์ workflow รันด้วย secrets ของ repo จึงให้ AI push ไม่ได้ในทุกกรณี ให้คนแก้ไฟล์เหล่านี้เองใน PR แยก แล้วรันใหม่โดยไม่แตะ workflow" ;;
   *) echo "unknown reason: $reason" >&2; exit 2 ;;
 esac
 
