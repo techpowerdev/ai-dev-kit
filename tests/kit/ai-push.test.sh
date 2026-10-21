@@ -82,7 +82,7 @@ world
 expect_ok   "clean clone has no credentials"       bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
 g "$W/claude" config http.https://github.com/.extraheader "AUTHORIZATION: basic SECRETVALUE"
 expect_fail "extraheader is detected"               bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
-out_has     "only the key name is printed"          "http.https://github.com/.extraheader"
+out_has     "only the section and variable are printed" "http.<…>.extraheader"
 if grep -q SECRETVALUE "$tmp/last.out"; then bad "the credential value was printed"; else ok; fi
 expect_ok   "--warn-only does not fail"             bash "$S/assert-no-git-creds.sh" --repo "$W/claude" --warn-only
 out_has     "--warn-only still warns"               "::warning"
@@ -147,7 +147,8 @@ for a in "\$@"; do [[ "\$a" == push ]] && printf '%s|%s|%s\n' "\${GIT_CONFIG_COU
 exec "$real_git" "\$@"
 WRAP
 chmod +x "$W/wrap/git"
-rm -f "$W/claude/.ai-pr-body.md"; claude_commit ai/12-add-thing src/c.txt; bundle --mode pipeline --issue 12 >/dev/null
+rm -f "$W/claude/.ai-pr-body.md"; claude_commit ai/12-add-thing src/c.txt
+BASE="$TIP"; bundle --mode pipeline --issue 12 >/dev/null; g "$W/trusted" fetch -q origin  # a resume: base = the pushed tip
 expect_ok "inspect the second round" inspect --mode pipeline --number 12; TIP2="$(outv tip)"
 PATH="$W/wrap:$PATH" PUSH_TOKEN=FAKE_TOKEN_123 bash "$S/push-branch.sh" --repo "$W/trusted" --mode pipeline --branch ai/12-add-thing --tip "$TIP2" --expected-old "$TIP" >"$tmp/last.out" 2>&1 || true
 expected_hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' FAKE_TOKEN_123 | base64 | tr -d '\n')"
@@ -348,10 +349,79 @@ HEAD0="$(remote_sha ai/12-x)"; claude_commit ai/12-x f2; claude_commit ai/12-x f
 BASE="$(g "$W/claude" rev-parse HEAD~1)"; bundle --mode pr --issue 12 --branch ai/12-x >/dev/null; trusted
 expect_fail "pr: a base that is not the PR head is refused" inspect --mode pr --number 5 --expected-branch ai/12-x
 
+# ---------------------------------------------------------------- 3a: pre-wiring hardening
+# a merge that brings in main and reverts a fix in a guarded path is still high risk
+world; claude_commit ai/12-x apps/api/auth/guard.ts "secure"; g "$W/claude" push -q origin ai/12-x
+g "$W/claude" checkout -q main; echo m >"$W/claude/m.txt"; g "$W/claude" add -A; g "$W/claude" commit -qm main-change; g "$W/claude" push -q origin main
+g "$W/claude" checkout -q ai/12-x; BASE="$(g "$W/claude" rev-parse HEAD)"
+echo "insecure" >"$W/claude/apps/api/auth/guard.ts"; g "$W/claude" commit -qam weaken
+g "$W/claude" merge -q --no-edit main; echo "secure" >"$W/claude/apps/api/auth/guard.ts"; g "$W/claude" commit -qam restore
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_ok "inspect a history that touched auth but nets to zero" inspect --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+[[ "$(outv high_risk)" == true ]] && ok || bad "a path touched in history counts even when the net diff is empty"
+# review of #20: an existing ai branch can only be resumed from its exact tip
+world; claude_commit ai/12-x f1; g "$W/claude" push -q origin ai/12-x
+REMOTE_X="$(remote_sha ai/12-x)"
+g "$W/claude" checkout -q -B ai/12-x main; echo z >"$W/claude/z.txt"; g "$W/claude" add -A; g "$W/claude" commit -qm "fresh start"
+bundle --mode pipeline --issue 12 >/dev/null; trusted
+expect_fail "pipeline: a base on main is refused when origin/ai/12-x already exists" inspect --mode pipeline --number 12
+out_has "it names the tip to resume from" "$REMOTE_X"
+# push-branch checks fast-forward itself: a matching lease is not enough
+TIP_NFF="$(g "$W/claude" rev-parse ai/12-x)"; g "$W/claude" push -q origin "$TIP_NFF:refs/heads/side"; trusted
+expect_fail "push: a tip that does not descend from the remote is refused even with a matching lease" \
+  push --mode pipeline --branch ai/12-x --tip "$TIP_NFF" --expected-old "$REMOTE_X"
+out_has "it says not a fast-forward" "not a fast-forward"
+[[ "$(remote_sha ai/12-x)" == "$REMOTE_X" ]] && ok || bad "the remote is unchanged after refusing a rewrite"
+# the old remote tip must be known locally, or the ancestry cannot be checked
+world; trusted; claude_commit ai/12-x f1; g "$W/claude" push -q origin ai/12-x; REMOTE_X="$(remote_sha ai/12-x)"
+expect_fail "push: an old remote tip missing from the trusted repo fails closed" \
+  push --mode pipeline --branch ai/12-x --tip "$BASE" --expected-old "$REMOTE_X"
+out_has "it says the tip is not in the repo" "not in this repo"
+[[ "$(remote_sha ai/12-x)" == "$REMOTE_X" ]] && ok || bad "the remote is unchanged"
+# a git error while listing paths fails instead of reporting "no high-risk paths"
+world; claude_commit ai/12-x apps/api/auth/guard.ts; bundle --mode pipeline --issue 12 >/dev/null; trusted
+mkdir -p "$W/gitwrap"; real_git="$(command -v git)"
+# fails "git <FAIL_SUB> ... --name-only ..." and passes everything else through
+cat >"$W/gitwrap/git" <<WRAP
+#!/usr/bin/env bash
+sub=""; name_only=""
+for a in "\$@"; do
+  [[ -z "\$sub" && ( "\$a" == diff || "\$a" == log ) ]] && sub="\$a"
+  [[ "\$a" == --name-only ]] && name_only=1
+done
+if [[ -n "\$name_only" && "\$sub" == "\${FAIL_SUB:-}" ]]; then echo "fatal: injected" >&2; exit 128; fi
+exec "$real_git" "\$@"
+WRAP
+chmod +x "$W/gitwrap/git"
+for sub in diff log; do
+  expect_fail "inspect: a failing git $sub fails closed" env PATH="$W/gitwrap:$PATH" FAIL_SUB="$sub" \
+    GITHUB_OUTPUT="$W/gh_out" bash "$S/inspect-bundle.sh" --repo "$W/trusted" --in "$OUT" --base "$BASE" \
+    --mode pipeline --number 12 --labeler "$kit/.github/labeler.yml"
+  out_has "it says git $sub failed" "(git $sub failed)"
+done
+# one-line labeler forms fail closed
+printf '"risk:high":\n  - any-glob-to-any-file: "**/auth/**"\n' >"$W/oneline.yml"
+expect_fail "a one-line labeler entry fails closed" inspect --mode pipeline --number 12 --labeler "$W/oneline.yml"
+out_has "it says why" "Cannot read these risk:high entries safely"
+# assert: a wrong --repo is not "no credentials"; token env and credential files are found
+expect_fail "a directory that is not a git repo fails" bash "$S/assert-no-git-creds.sh" --repo "$W/out"
+expect_fail "GH_TOKEN in the environment is detected" env GH_TOKEN=x bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+if grep -q '=x' "$tmp/last.out"; then bad "the token value was printed"; else ok; fi
+: >"$HOME/.git-credentials"
+expect_fail "the git-credentials file in HOME is detected" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+rm -f "$HOME/.git-credentials"; mkdir -p "$HOME/.ssh"; : >"$HOME/.ssh/id_ed25519"
+expect_fail "an ssh key in ~/.ssh is detected" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+rm -rf "$HOME/.ssh"
+g "$W/claude" config "url.https://x-access-token:SEKRET@github.com/.insteadOf" "https://github.com/"
+expect_fail "url.*.insteadOf is detected" bash "$S/assert-no-git-creds.sh" --repo "$W/claude"
+if grep -q SEKRET "$tmp/last.out"; then bad "a secret inside a key name was printed"; else ok; fi
+g "$W/claude" config --unset "url.https://x-access-token:SEKRET@github.com/.insteadOf"
+
 # ---------------------------------------------------------------- static: pushes never force or widen
 push_lines="$(grep -hE '(^|[[:space:]])(ai_git|git)[[:space:]](.*[[:space:]])?push([[:space:]]|$)' "$S"/*.sh | grep -vE '^[[:space:]]*#' || true)"
 if [[ -z "$push_lines" ]]; then bad "no push command found in scripts/ai-push (check the pattern)"
-elif grep -qE -- '--force|(^|[[:space:]])-f([[:space:]]|$)|[[:space:]]\+|--mirror|--all|--tags|--delete|(^|[[:space:]])-d([[:space:]]|$)' <<<"$push_lines"; then
+elif grep -qE -- '--force([^-]|$)|--force-with-lease[^=]|--force-if-includes|(^|[[:space:]])-f([[:space:]]|$)|[[:space:]]\+|--mirror|--all|--tags|--delete|(^|[[:space:]])-d([[:space:]]|$)' <<<"$push_lines" \
+     || ! grep -qF -- "--force-with-lease=refs/heads/\$branch:\$remote_old" <<<"$push_lines"; then
   bad "a push in scripts/ai-push forces, deletes or widens refs: $push_lines"
 else ok; fi
 

@@ -10,7 +10,12 @@
 #       pr:       remote tip == --expected-old (the PR head when the job started)
 #       pipeline: remote branch absent, or == --expected-old (resuming from it, A3)
 #     If the remote already equals TIP (a re-run), nothing is pushed.
-#   - no force, no "+" refspec, no --all/--mirror/--tags, hooks off
+#   - fast-forward only: the old remote tip must be in this repo and an ancestor of
+#     TIP, checked here right before the push (not only by inspect-bundle.sh)
+#   - the only force-like flag is a lease pinned to the value just checked, which makes
+#     the push fail if the remote moved; it never rewrites history because of the
+#     ancestry check above. No bare --force, no "+" refspec, no --all/--mirror/--tags,
+#     hooks off
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/ai-push/lib.sh
@@ -63,6 +68,16 @@ case "$mode" in
     fi ;;
 esac
 
-ai_git push --no-verify --porcelain "$remote" "$tip:refs/heads/$branch"
+# Fast-forward only, checked here and not just trusted from inspect-bundle.sh: with a
+# lease git would otherwise accept a history rewrite.
+if [[ -n "$remote_old" ]]; then
+  ai_git cat-file -e "$remote_old^{commit}" 2>/dev/null \
+    || ai_fail "origin/$branch is at $remote_old, which is not in this repo. Not pushing."
+  ai_git merge-base --is-ancestor "$remote_old" "$tip" \
+    || ai_fail "$tip does not build on origin/$branch ($remote_old): not a fast-forward. Not pushing."
+fi
+# The lease closes the gap between ls-remote and push: the push only happens if the
+# remote branch is still exactly what was checked above (absent, or expected_old).
+ai_git push --no-verify --porcelain "--force-with-lease=refs/heads/$branch:$remote_old" "$remote" "$tip:refs/heads/$branch"
 ai_output pushed true
 echo "Pushed $tip to $branch."

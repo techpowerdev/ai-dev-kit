@@ -138,6 +138,26 @@ printf '[%s][%s]' "$SPEC" "$ANS1" >"$R/comments.json"
 expect_ok "paginated comments are merged" fetch --stage spec --approved-by-label approved:spec
 has "answer from page 2" "$tmp/doc.md" "Answer from the owner"
 
+# ---------------------------------------------------------------- 3a: fetch hardening
+printf '[%s,%s]' "$SPEC" "$ANS1" >"$R/comments.json"
+printf '[%s]' "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"
+echo __ERROR__ >"$R/perm-user"
+expect_fail "a permission API error fails instead of meaning 'no write'" fetch --stage spec --approved-by-label approved:spec
+why "says it could not read the permission" "Could not read the repo permission"
+rm -f "$R/perm-user"; echo __ERROR__ >"$R/perm-boss"
+expect_fail "an API error on an answer author fails too" fetch --stage spec --approved-by-label approved:spec
+rm -f "$R/perm-boss"
+# two bot specs in the window between ai:spec and approved:spec is ambiguous
+SPEC_B="$(c 40 "$bot" 2026-10-20T10:15:00Z $'# Spec: second version from another run')"
+printf '[%s,%s,%s]' "$SPEC" "$SPEC_B" "$ANS1" >"$R/comments.json"
+printf '[%s,%s]' "$(ev ai:spec User 2026-10-20T09:50:00Z)" "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"
+expect_fail "two bot specs in the window fail as ambiguous" fetch --stage spec --approved-by-label approved:spec --window-label ai:spec
+why "says ambiguous" "ambiguous"
+# re-running the spec (a new ai:spec label) resets the window
+printf '[%s,%s,%s]' "$(ev ai:spec User 2026-10-20T09:50:00Z)" "$(ev ai:spec User 2026-10-20T10:10:00Z)" "$(ev approved:spec User 2026-10-20T11:00:00Z)" >"$R/events.json"
+expect_ok "after re-running the spec, the newest one is used" fetch --stage spec --approved-by-label approved:spec --window-label ai:spec
+has "the re-run spec is saved" "$tmp/doc.md" "second version from another run"
+
 # ---------------------------------------------------------------- commit-docs
 g() { git -C "$1" "${@:2}"; }
 git init -q -b main "$tmp/repo"; echo a >"$tmp/repo/a.txt"; g "$tmp/repo" add -A; g "$tmp/repo" commit -qm base
@@ -181,6 +201,8 @@ echo '[{"url":"https://github.com/o/r/pull/7","isCrossRepository":false}]' >"$R/
 expect_ok "existing PR: no new PR" open_pr --body-in /dev/null
 has   "existing PR URL printed" "$tmp/last.out" "pull/7"
 lacks "no pr create when one is open" "$FAKE_GH_LOG" "pr create"
+has   "a fresh trusted report is posted on the open PR" "$FAKE_GH_LOG" "pr comment https://github.com/o/r/pull/7"
+has   "the report carries the trusted footer" "$FAKE_GH_LOG" "Paths: b.txt"
 echo '[]' >"$R/prlist.json"
 printf '## Summary\nGood body\n' >"$tmp/body.md"; : >"$FAKE_GH_LOG"
 expect_ok "open a PR" open_pr --body-in "$tmp/body.md"

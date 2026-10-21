@@ -18,7 +18,17 @@ if [[ -n "${FAKE_GH_RESPONSES:-}" ]]; then
     *issues/*/events*)   cat "$FAKE_GH_RESPONSES/events.json"; exit ;;
     *collaborators/*/permission*)
       login="${args#*collaborators/}"; login="${login%%/permission*}"
-      if [[ -f "$FAKE_GH_RESPONSES/perm-$login" ]]; then cat "$FAKE_GH_RESPONSES/perm-$login"; else echo write; fi
+      if [[ -f "$FAKE_GH_RESPONSES/perm-$login" ]]; then
+        [[ "$(cat "$FAKE_GH_RESPONSES/perm-$login")" == __ERROR__ ]] && { echo "HTTP 502" >&2; exit 1; }
+        cat "$FAKE_GH_RESPONSES/perm-$login"
+      else echo write; fi
+      exit 0 ;;
+    "pr comment "*)
+      printf '%s\n' "$args" >>"${FAKE_GH_LOG:-/dev/null}"
+      prev=""; for a in "$@"; do
+        if [[ "$prev" == --body-file ]]; then { echo "----- body"; cat "$a"; echo "----- end"; } >>"${FAKE_GH_LOG:-/dev/null}"; fi
+        prev="$a"
+      done
       exit 0 ;;
     "pr list "*)         cat "$FAKE_GH_RESPONSES/prlist.json" 2>/dev/null || echo '[]'; exit 0 ;;
     "issue comment "*|"pr create "*)

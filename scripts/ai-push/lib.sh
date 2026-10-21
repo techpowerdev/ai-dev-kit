@@ -50,18 +50,27 @@ ai_output() {
 
 # ai_high_risk_globs <labeler.yml> — the globs listed under "risk:high", one per line.
 # Accepts "quoted", 'single-quoted' and bare list items; skips the "changed-files:" and
-# "any-glob-to-any-file:" keys (they end with a colon).
+# "any-glob-to-any-file:" keys (they end with a colon). Fails (status 1, reason on
+# stderr) on forms it cannot read safely, such as "- key: value" on one line or a
+# [flow, list]: reading those wrongly would silently turn the high-risk check off.
 ai_high_risk_globs() {
-  awk '
+  local out
+  out="$(awk '
     /^["\x27]?risk:high["\x27]?:/ { inblock = 1; next }
     /^[^[:space:]#]/ { inblock = 0 }
     inblock && /^[[:space:]]*-[[:space:]]*[^[:space:]]/ {
       line = $0
       sub(/^[[:space:]]*-[[:space:]]*/, "", line); sub(/[[:space:]]+#.*$/, "", line); sub(/[[:space:]]+$/, "", line)
       if (line ~ /:$/) next
+      if (line ~ /^[^"\x27]*:[[:space:]]/ || line ~ /[\[\]{}]/ && line !~ /^["\x27]/) { print "__UNREADABLE__ " line; next }
       if (line ~ /^".*"$/ || line ~ /^\x27.*\x27$/) line = substr(line, 2, length(line) - 2)
       if (line != "") print line
-    }' "$1"
+    }' "$1")" || return 1
+  if grep -q '^__UNREADABLE__ ' <<<"$out"; then
+    echo "Cannot read these risk:high entries safely: $(grep '^__UNREADABLE__ ' <<<"$out" | cut -c16- | tr '\n' ' ')" >&2
+    return 1
+  fi
+  printf '%s\n' "$out" | grep -v '^$' || true
 }
 
 # ai_redact_userinfo <text> — hide "user:secret@" in any URL inside the text.
